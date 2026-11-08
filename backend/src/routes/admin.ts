@@ -9,6 +9,7 @@ import { AuditRecordModel } from '../models/audit.js'
 import { RequirementModel } from '../models/requirement.js'
 import { AllocationRecordModel } from '../models/allocation.js'
 import { notify } from '../services/notification.service.js'
+import { getOverdueVolunteerTasks } from '../services/volunteer-safety.service.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { ApiError } from '../middleware/api-error.js'
 import type { AccountStatus } from '../models/common.js'
@@ -1110,6 +1111,15 @@ adminRouter.get('/tasks', requireAuth, requireRoles('admin'), async (req, res) =
   }
 
   res.status(200).json({ data: items, page: { nextCursor } })
+})
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/volunteer-safety/overdue — system-wide overdue safety check-ins
+// ---------------------------------------------------------------------------
+
+adminRouter.get('/volunteer-safety/overdue', requireAuth, requireRoles('admin'), async (_req, res) => {
+  const tasks = await getOverdueVolunteerTasks()
+  res.status(200).json({ data: tasks })
 })
 
 export default adminRouter

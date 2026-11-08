@@ -1,3 +1,4 @@
+import path from 'node:path'
 import express from 'express'
 import type { Request, Response, NextFunction } from 'express'
 import errorHandler from './middleware/error-handler.js'
@@ -14,6 +15,12 @@ import notificationsRouter from './routes/notifications.js'
 import matchingRouter from './routes/matching.js'
 import allocationsRouter from './routes/allocations.js'
 import coordinationRouter from './routes/coordination.js'
+import incidentsRouter from './routes/incidents.js'
+import alertsRouter from './routes/alerts.js'
+import webhooksRouter from './routes/webhooks.js'
+import distributionsRouter from './routes/distributions.js'
+import hazardsRouter from './routes/hazards.js'
+import eventsRouter from './routes/events.js'
 import { createRateLimiter } from './middleware/rate-limiter.js'
 
 const app = express()
@@ -51,9 +58,24 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 })
 
 // ---------------------------------------------------------------------------
-// Body parsing
+// Static file serving for uploads (evidence photos, receipts, delivery proofs)
 // ---------------------------------------------------------------------------
-app.use(express.json({ limit: '64kb' }))
+app.use(
+  '/uploads',
+  express.static(path.resolve(process.cwd(), 'uploads'), {
+    dotfiles: 'ignore',
+    index: false,
+    maxAge: '1d',
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+    },
+  }),
+)
+
+// ---------------------------------------------------------------------------
+// Body parsing (10mb to accommodate base64 evidence uploads & signatures)
+// ---------------------------------------------------------------------------
+app.use(express.json({ limit: '10mb' }))
 
 // ---------------------------------------------------------------------------
 // General API rate limiter — protects all /api routes from bulk scraping
@@ -77,6 +99,12 @@ app.use('/api/notifications', notificationsRouter)
 app.use('/api/matching', matchingRouter)
 app.use('/api/allocations', allocationsRouter)
 app.use('/api/coordination', coordinationRouter)
+app.use('/api/incidents', incidentsRouter)
+app.use('/api/alerts', alertsRouter)
+app.use('/api/webhooks', webhooksRouter)
+app.use('/api', eventsRouter)
+app.use('/api/distributions', distributionsRouter)
+app.use('/api/hazards', hazardsRouter)
 app.use(notFound)
 app.use(errorHandler)
 

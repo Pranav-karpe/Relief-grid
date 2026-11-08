@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../../components/layout/DashboardLayout'
 import Card from '../../components/ui/Card'
 import Button from '../../components/ui/Button'
 import Badge from '../../components/ui/Badge'
 import LocationMap from '../../components/ui/LocationMap'
+import { GlowingMetricCard, GlowingDonutChart, GlowingProgressMeter } from '../../components/ui/GlowingCharts'
 import { useAuthContext } from '../../lib/useAuthContext'
 import { AuthApiError } from '../../api/auth'
 import {
@@ -23,13 +24,14 @@ import NgoReportsSection from '../../components/ngo/NgoReportsSection'
 import NgoRequirementsSection from '../../components/ngo/NgoRequirementsSection'
 import NgoVolunteerDispatchSection from '../../components/ngo/NgoVolunteerDispatchSection'
 import NgoTasksOversightSection from '../../components/ngo/NgoTasksOversightSection'
+import { useLiveSync } from '../../lib/live-sync'
 
 type Section = 'overview' | 'profile' | 'verification' | 'reports' | 'requirements' | 'volunteers' | 'tasks'
 
 const NAV: { id: Section; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
+  { id: 'overview', label: 'Operations Overview' },
   { id: 'profile', label: 'Organisation Profile' },
-  { id: 'verification', label: 'Verification' },
+  { id: 'verification', label: 'Platform Accreditation' },
   { id: 'reports', label: 'Citizen Reports' },
   { id: 'requirements', label: 'Resource Requirements' },
   { id: 'volunteers', label: 'Find Volunteers' },
@@ -55,7 +57,7 @@ export default function NgoDashboard() {
     }
   }
 
-  useEffect(() => {
+  const loadProfileAndVerification = useCallback(() => {
     if (!token) return
     let cancelled = false
     setLoadError(null)
@@ -72,6 +74,23 @@ export default function NgoDashboard() {
     return () => { cancelled = true }
   }, [token])
 
+  useEffect(() => {
+    loadProfileAndVerification()
+  }, [loadProfileAndVerification])
+
+  // Live real-time cross-dashboard synchronization
+  useLiveSync((event) => {
+    if (
+      event.type === 'REPORT_CREATED' ||
+      event.type === 'DONATION_CREATED' ||
+      event.type === 'REQUIREMENT_CREATED' ||
+      event.type === 'DELIVERY_UPDATED' ||
+      event.type === 'DELIVERY_CONFIRMED'
+    ) {
+      loadProfileAndVerification()
+    }
+  })
+
   if (state.status !== 'authenticated') return null
 
   const verStatus = profile?.organizationProfile?.verificationStatus ?? 'not_submitted'
@@ -86,7 +105,7 @@ export default function NgoDashboard() {
       subtitle: 'Official NGO registration, administrative contacts, and operational scope.',
     },
     verification: {
-      title: 'Platform Verification',
+      title: 'Platform Accreditation & Darpan Verification',
       subtitle: 'Official platform accreditation status, AI registration check, and compliance feedback.',
     },
     reports: {
@@ -113,13 +132,13 @@ export default function NgoDashboard() {
       subtitle={titles[section]?.subtitle}
     >
       {/* Top navigation tabs */}
-      <nav className="mb-6 flex flex-wrap gap-2 border-b border-line pb-3" aria-label="NGO dashboard sections">
+      <nav className="mb-6 flex flex-wrap gap-2.5 border-b border-line pb-3.5" aria-label="NGO dashboard sections">
         {NAV.map(({ id, label }) => (
           <button
             key={id}
             type="button"
             onClick={() => handleSetSection(id)}
-            className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all focus-visible:outline-none interactive-popup ${
+            className={`rounded-xl px-4 py-2 type-nav font-semibold transition-all focus-visible:outline-none interactive-popup ${
               section === id
                 ? 'bg-orange text-white shadow-xs'
                 : 'text-muted hover:text-content hover:bg-surface-raised'
@@ -132,16 +151,16 @@ export default function NgoDashboard() {
       </nav>
 
       {loadError && (
-        <div className="mb-6 rounded-xl border border-error/30 bg-error/10 p-4 text-sm text-error flex items-center justify-between" role="alert">
+        <div className="mb-6 rounded-2xl border border-error/30 bg-error/10 p-5 text-sm font-medium text-error flex items-center justify-between" role="alert">
           <span>{loadError}</span>
-          <Button variant="ghost" className="text-xs h-7 px-3" onClick={() => window.location.reload()}>Retry</Button>
+          <Button variant="ghost" className="h-9 px-4 text-xs font-semibold" onClick={() => window.location.reload()}>Retry</Button>
         </div>
       )}
 
       {/* Loading skeleton */}
       {!profile && !loadError && (
-        <div className="py-12 text-center text-sm text-muted">
-          <svg className="mx-auto h-6 w-6 animate-spin text-orange mb-3" viewBox="0 0 24 24" fill="none">
+        <div className="py-16 text-center text-muted type-body">
+          <svg className="mx-auto h-8 w-8 animate-spin text-orange mb-3" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
           </svg>
@@ -185,7 +204,7 @@ export default function NgoDashboard() {
 }
 
 // ---------------------------------------------------------------------------
-// Overview section — utilizes full width with operational metrics & summaries
+// Overview section — operational metrics, glowing charts, and sector map
 // ---------------------------------------------------------------------------
 
 type OverviewProps = {
@@ -193,15 +212,6 @@ type OverviewProps = {
   profile: NgoProfile
   verStatus: string
   onNavigate: (s: Section) => void
-}
-
-const VER_TONE: Record<string, string> = {
-  not_submitted: 'text-muted',
-  pending: 'text-warning',
-  under_review: 'text-warning',
-  verified: 'text-success',
-  rejected: 'text-error',
-  suspended: 'text-error',
 }
 
 const VER_LABEL: Record<string, string> = {
@@ -218,7 +228,7 @@ function OverviewSection({ token, profile, verStatus, onNavigate }: OverviewProp
   const [reports, setReports] = useState<NgoReport[]>([])
   const [loadingSummaries, setLoadingSummaries] = useState(true)
 
-  useEffect(() => {
+  const loadOverviewData = useCallback(() => {
     let cancelled = false
     setLoadingSummaries(true)
     const fetchReports = verStatus === 'verified' ? getNgoReports(token, { status: 'submitted' }) : Promise.resolve({ data: [] })
@@ -238,8 +248,20 @@ function OverviewSection({ token, profile, verStatus, onNavigate }: OverviewProp
     return () => { cancelled = true }
   }, [token, verStatus])
 
+  useEffect(() => {
+    loadOverviewData()
+  }, [loadOverviewData])
+
+  useLiveSync((event) => {
+    if (event.type === 'REPORT_CREATED' || event.type === 'REQUIREMENT_CREATED' || event.type === 'DELIVERY_CONFIRMED') {
+      loadOverviewData()
+    }
+  })
+
   const activeReqsCount = requirements.filter((r) => r.status === 'active').length
   const fulfilledReqsCount = requirements.filter((r) => r.status === 'fulfilled').length
+  const totalQuantityRequested = requirements.reduce((acc, r) => acc + (r.quantityRequested || 0), 0)
+  const totalQuantityFulfilled = requirements.reduce((acc, r) => acc + (r.quantityFulfilled || 0), 0)
 
   const reportMarkers = reports
     .filter((r) => r.location?.coordinates && r.location.coordinates.length === 2)
@@ -254,87 +276,76 @@ function OverviewSection({ token, profile, verStatus, onNavigate }: OverviewProp
   return (
     <div className="space-y-6">
       {/* Operational Highlights Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* NGO Profile Card */}
-        <div className="rounded-xl border border-line bg-surface p-5 shadow-xs flex flex-col justify-between">
-          <div>
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Organisation</span>
-            <p className="mt-2 text-lg font-bold text-content truncate">
-              {profile.organizationProfile?.name || profile.displayName}
-            </p>
-            <p className="mt-1 text-xs text-muted truncate">
-              Reg: {profile.organizationProfile?.registrationNumber || 'Not registered'}
-            </p>
-          </div>
-          <Button variant="ghost" className="mt-4 text-xs px-0 text-accent hover:text-accent-strong justify-start" onClick={() => onNavigate('profile')}>
-            Edit Profile →
-          </Button>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <GlowingMetricCard
+          title="Organisation"
+          value={profile.organizationProfile?.name || profile.displayName}
+          subtitle={`Reg: ${profile.organizationProfile?.registrationNumber || 'Not registered'}`}
+          tone="orange"
+        />
+        <GlowingMetricCard
+          title="Accreditation"
+          value={VER_LABEL[verStatus] ?? verStatus}
+          subtitle={verStatus === 'verified' ? 'Accredited for crisis dispatch' : 'Pending admin review'}
+          tone={verStatus === 'verified' ? 'emerald' : 'amber'}
+        />
+        <GlowingMetricCard
+          title="Active Requisitions"
+          value={loadingSummaries ? '—' : activeReqsCount}
+          subtitle={`${fulfilledReqsCount} fulfilled • ${requirements.length} total`}
+          tone="blue"
+        />
+        <GlowingMetricCard
+          title="Distress Requests"
+          value={loadingSummaries ? '—' : reports.length}
+          subtitle="Awaiting response in sector"
+          tone="purple"
+        />
+      </div>
+
+      {/* Analytics & Pipeline Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-6 rounded-2xl border border-line bg-surface p-6 glow-card">
+          <h3 className="type-card-heading text-content mb-1">Requisition Status Distribution</h3>
+          <p className="type-sm text-muted mb-4">Breakdown of resource requisition demands</p>
+          <GlowingDonutChart
+            segments={[
+              { label: 'Active Demands', value: activeReqsCount, color: '#f97316' },
+              { label: 'Fulfilled', value: fulfilledReqsCount, color: '#10b981' },
+              { label: 'Expired/Cancelled', value: Math.max(requirements.length - activeReqsCount - fulfilledReqsCount, 0), color: '#64748b' },
+            ]}
+            centerValue={String(requirements.length)}
+            centerTitle="Demands"
+          />
         </div>
 
-        {/* Verification Status Card */}
-        <div className="rounded-xl border border-line bg-surface p-5 shadow-xs flex flex-col justify-between">
+        <div className="lg:col-span-6 rounded-2xl border border-line bg-surface p-6 glow-card flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Accreditation</span>
-              <span className={`h-2 w-2 rounded-full ${verStatus === 'verified' ? 'bg-success' : verStatus === 'pending' ? 'bg-warning' : 'bg-muted'}`} />
-            </div>
-            <p className={`mt-2 text-lg font-bold ${VER_TONE[verStatus] ?? 'text-muted'}`}>
-              {VER_LABEL[verStatus] ?? verStatus}
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              {verStatus === 'not_submitted' && 'Submit profile info to unlock coordination features.'}
-              {verStatus === 'pending' && 'Application currently under administrator review.'}
-              {verStatus === 'verified' && 'Accredited for crisis mobilization & volunteer dispatch.'}
-              {verStatus === 'rejected' && 'Review feedback notes and update verification.'}
-            </p>
-          </div>
-          <Button variant="ghost" className="mt-4 text-xs px-0 text-accent hover:text-accent-strong justify-start" onClick={() => onNavigate('verification')}>
-            View Verification Status →
-          </Button>
-        </div>
+            <h3 className="type-card-heading text-content mb-1">Resource Fulfillment Metrics</h3>
+            <p className="type-sm text-muted mb-4">Aggregated units delivered vs. requested</p>
 
-        {/* Active Requirements Card */}
-        <div className="rounded-xl border border-line bg-surface p-5 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Resource Demands</span>
-              <span className="text-xs font-bold text-orange">{loadingSummaries ? '—' : activeReqsCount} Active</span>
+            <div className="space-y-4">
+              <GlowingProgressMeter
+                label="Total Quantity Fulfillment"
+                value={totalQuantityFulfilled}
+                total={Math.max(totalQuantityRequested, 1)}
+                color="orange"
+              />
+              <GlowingProgressMeter
+                label="Requisitions Completed"
+                value={fulfilledReqsCount}
+                total={Math.max(requirements.length, 1)}
+                color="emerald"
+              />
             </div>
-            <p className="mt-2 text-3xl font-bold text-content">
-              {loadingSummaries ? '—' : requirements.length}
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              {fulfilledReqsCount} fulfilled · {activeReqsCount} currently active
-            </p>
           </div>
-          <Button variant="ghost" className="mt-4 text-xs px-0 text-accent hover:text-accent-strong justify-start" onClick={() => onNavigate('requirements')}>
-            Manage Requirements →
-          </Button>
-        </div>
 
-        {/* Volunteer Dispatch Quick Action Card */}
-        <div className="rounded-xl border border-line bg-surface p-5 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Field Delivery</span>
-              <Badge tone={verStatus === 'verified' ? 'success' : 'neutral'}>
-                {verStatus === 'verified' ? 'Active' : 'Locked'}
-              </Badge>
-            </div>
-            <p className="mt-2 text-lg font-bold text-content">
-              Volunteer Dispatch
-            </p>
-            <p className="mt-1 text-xs text-muted">
-              Discover verified volunteers within 10 km and confirm deliveries.
-            </p>
-          </div>
-          <div className="mt-4 flex gap-2">
-            <Button variant="ghost" className="text-xs px-0 text-accent hover:text-accent-strong justify-start" onClick={() => onNavigate('volunteers')}>
-              Find Volunteers →
+          <div className="flex flex-wrap items-center gap-3 pt-5 border-t border-line mt-4">
+            <Button variant="secondary" className="h-10 px-4 text-xs font-semibold" onClick={() => onNavigate('requirements')}>
+              Create Requisition Demand →
             </Button>
-            <span className="text-muted/40">·</span>
-            <Button variant="ghost" className="text-xs px-0 text-accent hover:text-accent-strong justify-start" onClick={() => onNavigate('tasks')}>
-              Tasks →
+            <Button variant="primary" className="h-10 px-4 text-xs font-semibold" onClick={() => onNavigate('volunteers')}>
+              Scan Nearby Volunteers →
             </Button>
           </div>
         </div>
@@ -344,21 +355,21 @@ function OverviewSection({ token, profile, verStatus, onNavigate }: OverviewProp
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Visual Map Column */}
         <div className="lg:col-span-2">
-          <Card className="p-5 border-line bg-surface flex flex-col">
+          <Card className="p-6 border-line bg-surface flex flex-col glow-card">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-semibold text-content">Operational Sector Overview</h3>
-                <p className="text-xs text-muted mt-0.5">Real-time geospatial distribution of citizen distress requests.</p>
+                <h3 className="type-card-heading text-content">Operational Sector Geospatial Grid</h3>
+                <p className="type-sm text-muted mt-0.5">Real-time geospatial distribution of citizen distress requests.</p>
               </div>
-              <Badge tone="info" className="text-[10px]">
-                {reportMarkers.length} Locations Mapped
+              <Badge tone="info" className="text-xs font-medium">
+                {reportMarkers.length} Incidents Mapped
               </Badge>
             </div>
 
-            <div className="w-full rounded-xl overflow-hidden border border-line">
+            <div className="w-full rounded-2xl overflow-hidden border border-line">
               <LocationMap
                 markers={reportMarkers}
-                height={380}
+                height={400}
                 listHeading="Distress Incident Coordinates"
               />
             </div>
@@ -367,37 +378,37 @@ function OverviewSection({ token, profile, verStatus, onNavigate }: OverviewProp
 
         {/* Recent Citizen Reports Column */}
         <div>
-          <Card className="p-5 border-line bg-surface flex flex-col justify-between h-full">
+          <Card className="p-6 border-line bg-surface flex flex-col justify-between h-full glow-card">
             <div>
-              <div className="flex items-center justify-between pb-3 border-b border-line">
+              <div className="flex items-center justify-between pb-3.5 border-b border-line">
                 <div>
-                  <h3 className="text-sm font-semibold text-content">Citizen Distress Reports</h3>
-                  <p className="text-xs text-muted mt-0.5">Needs submitted by citizens in nearby sectors.</p>
+                  <h3 className="type-card-heading text-content">Distress Queue</h3>
+                  <p className="type-sm text-muted mt-0.5">Submissions in active sectors.</p>
                 </div>
-                <Button variant="ghost" className="text-xs text-accent hover:text-accent-strong p-0" onClick={() => onNavigate('reports')}>
+                <Button variant="ghost" className="h-8 px-2 text-xs font-semibold text-orange hover:text-orange-strong" onClick={() => onNavigate('reports')}>
                   View all →
                 </Button>
               </div>
 
               <div className="mt-4">
                 {loadingSummaries ? (
-                  <p className="py-6 text-sm text-muted text-center">Loading reports…</p>
+                  <p className="py-8 text-sm text-muted text-center">Loading incident reports…</p>
                 ) : reports.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-line/80 py-8 px-4 text-center">
-                    <p className="text-sm font-medium text-content">No distress reports pending</p>
-                    <p className="text-xs text-muted mt-1">New citizen submissions in your operational region will appear here.</p>
+                  <div className="rounded-2xl border border-dashed border-line/80 py-10 px-4 text-center">
+                    <p className="type-card-heading text-content">No distress reports pending</p>
+                    <p className="type-sm text-muted mt-1">New citizen submissions in your sector will stream here via live sync.</p>
                   </div>
                 ) : (
                   <ul className="space-y-3">
                     {reports.slice(0, 4).map((r) => (
-                      <li key={r._id} className="rounded-xl border border-line bg-surface-raised p-3.5 space-y-1.5 transition-all hover:border-accent/40">
+                      <li key={r._id} className="rounded-xl border border-line bg-surface-raised p-4 space-y-1.5 transition-all hover:border-orange/50">
                         <div className="flex items-start justify-between gap-2">
-                          <p className="font-semibold text-content text-xs line-clamp-1">{r.title}</p>
-                          <Badge tone={r.urgency === 'critical' ? 'error' : r.urgency === 'high' ? 'warning' : 'neutral'} className="text-[10px]">
+                          <p className="font-semibold text-content type-body line-clamp-1">{r.title}</p>
+                          <Badge tone={r.urgency === 'critical' ? 'error' : r.urgency === 'high' ? 'warning' : 'neutral'} className="text-[11px]">
                             {r.urgency}
                           </Badge>
                         </div>
-                        <div className="flex items-center justify-between text-[11px] text-muted">
+                        <div className="flex items-center justify-between type-sm text-muted">
                           <span className="capitalize font-medium text-content">{r.needCategory}</span>
                           <span>{new Date(r.createdAt).toLocaleDateString()}</span>
                         </div>

@@ -40,6 +40,14 @@ const allocationRecordSchema = new Schema(
     completedAt: Date,
     /** Reason stored when state transitions to `failed`. */
     failureReason: { type: String, trim: true, maxlength: 500 },
+    /** Reconciliation details if fulfilled or partially delivered via volunteer tasks. */
+    reconciliation: {
+      reconciledAt: Date,
+      quantityDelivered: { type: Number, min: 0 },
+      quantityDeficit: { type: Number, min: 0 },
+      discrepancyReason: { type: String, maxlength: 100 },
+      taskId: { type: Schema.Types.ObjectId, ref: 'VolunteerTask' },
+    },
   },
   { timestamps: true },
 )

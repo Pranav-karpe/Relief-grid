@@ -43,8 +43,8 @@ export default function VolunteerHistorySection({ token }: Props) {
   useEffect(() => { load() }, [load])
 
   return (
-    <Card>
-      <SectionHeading title="Task history" description="Completed, delivered, and declined tasks." />
+    <Card className="p-6 md:p-8 bg-surface border-line glow-card">
+      <SectionHeading title="Mission & Transit History" description="Historical archive of delivered, reconciled, and completed field missions." />
 
       {loading ? (
         <p className="mt-6 text-sm text-muted">Loading history…</p>

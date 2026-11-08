@@ -6,6 +6,9 @@ import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import ReliefGridLogo from '../ui/ReliefGridLogo'
 import NotificationPanel from './NotificationPanel'
+import { offlineStorage } from '../../lib/offline-storage'
+import { EmergencyBroadcastBanner } from '../ui/EmergencyBroadcastBanner'
+import { liveSync, useLiveConnectionStatus } from '../../lib/live-sync'
 
 type NavItem = {
   label: string
@@ -134,7 +137,7 @@ function NavItems({ items, onClick }: { items: NavItem[]; onClick?: () => void }
 
   return (
     <nav aria-label="Console navigation" className="w-full">
-      <ul className="grid gap-1">
+      <ul className="grid gap-1.5">
         {items.map((item) => {
           const itemTab = item.tab ?? 'overview'
           const isBasePath = location.pathname === item.to.split('?')[0]
@@ -149,9 +152,9 @@ function NavItems({ items, onClick }: { items: NavItem[]; onClick?: () => void }
                 onClick={onClick}
                 title={item.label}
                 aria-current={isActive ? 'page' : undefined}
-                className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150 interactive-popup focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                className={`group flex items-center gap-3.5 rounded-xl px-3.5 py-2.5 text-[15.5px] font-medium transition-all duration-150 interactive-popup focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                   isActive
-                    ? 'bg-orange/15 text-orange font-semibold border border-orange/40 shadow-xs shadow-orange-500/10'
+                    ? 'bg-orange/15 text-orange font-semibold border border-orange/40 shadow-xs shadow-orange-500/15'
                     : 'text-muted hover:bg-surface-raised hover:text-content border border-transparent'
                 }`}
               >
@@ -178,7 +181,7 @@ function UserAvatar({ name }: { name: string }) {
 
   return (
     <div
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-bold text-white shadow-xs"
+      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white shadow-xs"
       style={{ background: 'linear-gradient(135deg, var(--color-orange), var(--color-accent))' }}
       aria-hidden="true"
     >
@@ -198,6 +201,23 @@ export default function DashboardLayout({ children, title, subtitle, actions }: 
   const { state, signOut } = useAuthContext()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [isOnline, setIsOnline] = useState(true)
+  const [pendingSync, setPendingSync] = useState(0)
+  const sseStatus = useLiveConnectionStatus()
+
+  useEffect(() => {
+    return offlineStorage.subscribe((online, count) => {
+      setIsOnline(online)
+      setPendingSync(count)
+    })
+  }, [])
+
+  // Connect live sync when authenticated
+  useEffect(() => {
+    if (state.status === 'authenticated' && state.token) {
+      liveSync.connect(state.token)
+    }
+  }, [state])
 
   // Accessible Escape-key listener and scroll-lock for mobile drawer
   useEffect(() => {
@@ -222,29 +242,30 @@ export default function DashboardLayout({ children, title, subtitle, actions }: 
   const dashboardHome = ROLE_DASHBOARD[user.role]
 
   function handleSignOut() {
+    liveSync.disconnect()
     signOut()
     navigate('/', { replace: true })
   }
 
   return (
     <div className="flex min-h-screen bg-page text-content">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-line bg-surface md:flex" aria-label="Dashboard sidebar">
+      {/* Desktop sidebar — comfortable 288px width prevents any label clipping */}
+      <aside className="hidden w-72 shrink-0 flex-col border-r border-line bg-surface md:flex shadow-surface" aria-label="Dashboard sidebar">
         {/* Brand header */}
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <ReliefGridLogo size="sm" linkTo={dashboardHome} />
+        <div className="flex items-center justify-between border-b border-line px-6 py-5">
+          <ReliefGridLogo size="md" linkTo={dashboardHome} />
         </div>
 
         {/* User identification */}
-        <div className="p-3">
-          <div className="flex items-center gap-3 rounded-xl border border-line bg-surface-raised p-3 shadow-xs">
+        <div className="p-4">
+          <div className="flex items-center gap-3.5 rounded-2xl border border-line bg-surface-raised p-3.5 shadow-xs">
             <UserAvatar name={user.displayName} />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-content" title={user.displayName}>
+              <p className="truncate text-[15.5px] font-bold text-content tracking-tight" title={user.displayName}>
                 {user.displayName}
               </p>
-              <div className="mt-0.5 flex items-center gap-1.5">
-                <Badge tone="info" className="text-[10px] uppercase tracking-wider py-0 px-2">
+              <div className="mt-1 flex items-center gap-1.5">
+                <Badge tone="info" className="text-xs uppercase tracking-wider py-0.5 px-2.5 font-bold">
                   {roleLabel}
                 </Badge>
               </div>
@@ -253,21 +274,21 @@ export default function DashboardLayout({ children, title, subtitle, actions }: 
         </div>
 
         {/* Navigation list */}
-        <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
-          <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">
+        <div className="flex flex-1 flex-col gap-1.5 overflow-y-auto px-3.5 py-2">
+          <p className="px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider text-subtle">
             Console Navigation
           </p>
           <NavItems items={navItems} />
         </div>
 
         {/* Sidebar footer */}
-        <div className="border-t border-line p-3">
+        <div className="border-t border-line p-4">
           <Button
             variant="ghost"
-            className="w-full justify-start gap-2.5 text-sm text-muted hover:text-error hover:bg-error/10"
+            className="w-full justify-start gap-3 text-[15px] font-medium text-muted hover:text-error hover:bg-error/10 py-2.5"
             onClick={handleSignOut}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
             </svg>
             Sign out
@@ -362,32 +383,55 @@ export default function DashboardLayout({ children, title, subtitle, actions }: 
 
         {/* Desktop top context header */}
         <div className="dash-header-glow hidden items-center justify-between border-b border-line bg-surface/70 px-8 py-3.5 backdrop-blur-xs md:flex">
-          <div className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2.5 text-sm text-muted">
             <span className="font-semibold text-content">ReliefGrid Console</span>
-            <span aria-hidden="true">/</span>
-            <span className="capitalize">{roleLabel}</span>
-            <span aria-hidden="true">/</span>
-            <span className="text-content font-medium">{title}</span>
+            <span aria-hidden="true" className="text-muted/60">/</span>
+            <span className="capitalize font-medium text-orange/90">{roleLabel}</span>
+            <span aria-hidden="true" className="text-muted/60">/</span>
+            <span className="text-content font-semibold">{title}</span>
           </div>
           <div className="flex items-center gap-4">
             <NotificationPanel token={state.token} />
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted font-medium">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live Sync
+            <span
+              className={`inline-flex items-center gap-2 text-[13px] font-semibold px-3 py-1 rounded-full border shadow-xs ${
+                !isOnline
+                  ? 'border-amber-800/40 bg-amber-950/30 text-amber-400'
+                  : sseStatus === 'connected'
+                  ? 'border-emerald-800/50 bg-emerald-950/30 text-emerald-400'
+                  : 'border-amber-800/40 bg-amber-950/30 text-amber-400'
+              }`}
+            >
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${
+                  !isOnline
+                    ? 'bg-amber-500'
+                    : sseStatus === 'connected'
+                    ? 'bg-emerald-500 animate-pulse'
+                    : 'bg-amber-500 animate-ping'
+                }`}
+              ></span>
+              {!isOnline
+                ? `Offline Mode ${pendingSync > 0 ? `(${pendingSync} queued)` : ''}`
+                : sseStatus === 'connected'
+                ? 'Live Connected'
+                : 'Reconnecting…'}
             </span>
           </div>
         </div>
 
+        {/* Emergency Alert Broadcast Banner */}
+        <EmergencyBroadcastBanner role={user.role} />
+
         {/* Main page content — uses available space intelligently */}
-        <main className="flex-1 overflow-x-hidden px-4 py-6 sm:px-6 md:px-8 lg:px-10" id="main-content">
-          <div className="mx-auto w-full max-w-[1680px]">
+        <main className="flex-1 overflow-x-hidden px-4 py-7 sm:px-7 md:px-9 lg:px-11" id="main-content">
+          <div className="mx-auto w-full max-w-[1720px]">
             {/* Dashboard header banner */}
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-line pb-5">
+            <div className="mb-7 flex flex-wrap items-center justify-between gap-4 border-b border-line pb-6">
               <div>
                 <h1 className="type-dash-title text-content tracking-tight">{title}</h1>
-                {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+                {subtitle && <p className="mt-1.5 text-[15.5px] text-muted leading-relaxed max-w-4xl">{subtitle}</p>}
               </div>
-              {actions && <div className="flex flex-wrap items-center gap-2.5">{actions}</div>}
+              {actions && <div className="flex flex-wrap items-center gap-3">{actions}</div>}
             </div>
 
             {/* Page content */}

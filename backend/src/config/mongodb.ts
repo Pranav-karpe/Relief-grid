@@ -1,10 +1,46 @@
 import mongoose from 'mongoose'
 
+let connectionPromise: Promise<void> | null = null
+
 export async function connectMongoDB(uri: string): Promise<void> {
-  await mongoose.connect(uri, {
-    serverSelectionTimeoutMS: 10000,
-    connectTimeoutMS: 10000,
-  })
+  if (mongoose.connection.readyState === 1) {
+    return
+  }
+
+  if (connectionPromise) {
+    return connectionPromise
+  }
+
+  connectionPromise = (async () => {
+    try {
+      await mongoose.connect(uri, {
+        serverSelectionTimeoutMS: 10000,
+        connectTimeoutMS: 10000,
+      })
+    } finally {
+      connectionPromise = null
+    }
+  })()
+
+  return connectionPromise
+}
+
+export async function ensureMongoDBConnected(uri?: string): Promise<boolean> {
+  if (isMongoDBConnected()) {
+    return true
+  }
+
+  const targetUri = uri || process.env.MONGODB_URI
+  if (!targetUri) {
+    return false
+  }
+
+  try {
+    await connectMongoDB(targetUri)
+    return isMongoDBConnected()
+  } catch {
+    return false
+  }
 }
 
 export function getMongoDBErrorCategory(error: unknown): string {

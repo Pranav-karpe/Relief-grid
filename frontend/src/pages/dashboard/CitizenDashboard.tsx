@@ -7,6 +7,12 @@ import Input from '../../components/ui/Input'
 import Badge from '../../components/ui/Badge'
 import LocationMap from '../../components/ui/LocationMap'
 import DeliveryTimeline from '../../components/ui/DeliveryTimeline'
+import {
+  GlowingMetricCard,
+  GlowingDonutChart,
+  GlowingBarChart,
+} from '../../components/ui/GlowingCharts'
+import { useLiveSync } from '../../lib/live-sync'
 import { useAuthContext } from '../../lib/useAuthContext'
 import { AuthApiError } from '../../api/auth'
 import {
@@ -845,17 +851,23 @@ function CitizenOverview({ token, onNavigate, onViewDetails, refreshKey }: Citiz
     void loadData()
   }, [loadData, refreshKey])
 
+  // Live Cross-Dashboard Synchronization: updates automatically on backend events
+  useLiveSync(() => {
+    void loadData()
+  }, [loadData])
+
   const total = reports?.length ?? 0
   const submitted = reports?.filter((r) => r.status === 'submitted').length ?? 0
   const underReview = reports?.filter((r) => r.status === 'under_review').length ?? 0
+  const inProgress = reports?.filter((r) => r.status === 'verified').length ?? 0
   const resolved = reports?.filter((r) => r.status === 'resolved').length ?? 0
 
-  const stats = [
-    { label: 'Total Requests', value: total, tone: 'text-content' },
-    { label: 'Submitted', value: submitted, tone: 'text-info' },
-    { label: 'Under Review', value: underReview, tone: 'text-warning' },
-    { label: 'Resolved', value: resolved, tone: 'text-success' },
-  ]
+  // Category counts
+  const foodCount = reports?.filter((r) => r.needCategory === 'food').length ?? 0
+  const waterCount = reports?.filter((r) => r.needCategory === 'water').length ?? 0
+  const shelterCount = reports?.filter((r) => r.needCategory === 'shelter').length ?? 0
+  const medicalCount = reports?.filter((r) => r.needCategory === 'medical').length ?? 0
+  const otherCount = reports?.filter((r) => r.needCategory === 'other').length ?? 0
 
   const mapMarkers = (reports ?? [])
     .filter((r) => r.location && Array.isArray(r.location.coordinates) && r.location.coordinates.length === 2)
@@ -868,19 +880,21 @@ function CitizenOverview({ token, onNavigate, onViewDetails, refreshKey }: Citiz
     }))
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       {/* Welcome Banner */}
-      <div className="rounded-2xl border border-line bg-gradient-to-r from-surface to-surface-raised p-6 sm:p-7 shadow-xs">
+      <div className="rounded-2xl border border-line bg-gradient-to-r from-surface to-surface-raised p-6 sm:p-7 shadow-surface">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-xl sm:text-2xl font-bold text-content tracking-tight">Your Relief Dashboard</h2>
-            <p className="mt-1 text-sm text-muted">Create a relief request and follow its progress from one place.</p>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-content tracking-tight">Citizen Relief Console</h2>
+            <p className="mt-1.5 text-base text-muted leading-relaxed">
+              Create an urgent relief distress call and follow real-time verification and delivery progress.
+            </p>
           </div>
           <Button
             onClick={() => onNavigate('create')}
-            className="shrink-0 gap-2 h-11 px-5 shadow-sm shadow-orange-500/20"
+            className="shrink-0 gap-2 h-12 px-6 text-base font-semibold shadow-sm shadow-orange-500/20"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             Create Relief Request
@@ -888,15 +902,83 @@ function CitizenOverview({ token, onNavigate, onViewDetails, refreshKey }: Citiz
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-xl border border-line bg-surface p-5 shadow-xs">
-            <p className="text-xs uppercase tracking-wider text-muted font-medium">{s.label}</p>
-            <p className={`mt-2 text-3xl font-bold ${s.tone}`}>{loading ? '—' : s.value}</p>
-          </div>
-        ))}
+      {/* Summary Glowing Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+        <GlowingMetricCard
+          title="Total Requests"
+          value={loading ? '—' : total}
+          subtitle="All recorded requests"
+          icon="📋"
+          tone="neutral"
+          onClick={() => onNavigate('reports')}
+        />
+        <GlowingMetricCard
+          title="Submitted"
+          value={loading ? '—' : submitted}
+          subtitle="Queued for dispatch"
+          icon="⏳"
+          tone="amber"
+          onClick={() => onNavigate('reports')}
+        />
+        <GlowingMetricCard
+          title="In Verification / Transit"
+          value={loading ? '—' : inProgress + underReview}
+          subtitle="Active responders deployed"
+          icon="🚚"
+          tone="orange"
+          onClick={() => onNavigate('reports')}
+        />
+        <GlowingMetricCard
+          title="Resolved"
+          value={loading ? '—' : resolved}
+          subtitle="Aid delivered successfully"
+          icon="✅"
+          tone="emerald"
+          onClick={() => onNavigate('reports')}
+        />
       </div>
+
+      {/* Glowing Analytics Row */}
+      {total > 0 && !loading && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-7 glow-card p-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="type-card-heading text-content">Needs by Resource Category</h3>
+              <Badge tone="info">Distribution</Badge>
+            </div>
+            <p className="text-sm text-muted mb-3">Breakdown of assistance items requested across your submissions.</p>
+            <GlowingBarChart
+              data={[
+                { label: 'Food', value: foodCount, color: '#f59e0b' },
+                { label: 'Water', value: waterCount, color: '#3b82f6' },
+                { label: 'Shelter', value: shelterCount, color: '#f97316' },
+                { label: 'Medical', value: medicalCount, color: '#ef4444' },
+                { label: 'Other', value: otherCount, color: '#8b5cf6' },
+              ]}
+              height={170}
+              unit="requests"
+            />
+          </div>
+
+          <div className="lg:col-span-5 glow-card p-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="type-card-heading text-content">Request Status Lifecycle</h3>
+              <Badge tone="neutral">Total: {total}</Badge>
+            </div>
+            <p className="text-sm text-muted mb-2">Real-time status of submitted relief calls.</p>
+            <GlowingDonutChart
+              centerTitle="Requests"
+              centerValue={total}
+              segments={[
+                { label: 'Submitted', value: submitted, color: '#f59e0b' },
+                { label: 'Under Review', value: underReview, color: '#3b82f6' },
+                { label: 'In Transit', value: inProgress, color: '#f97316' },
+                { label: 'Resolved', value: resolved, color: '#10b981' },
+              ]}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Loading state */}
       {loading && (

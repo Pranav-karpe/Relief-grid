@@ -146,6 +146,9 @@ export type NearbyVolunteer = {
   areas: string[]
   phone?: string
   distanceKm: number
+  affiliation?: 'independent' | 'ngo'
+  verificationStatus?: string
+  experience?: string
 }
 
 export type NgoTask = {
@@ -188,6 +191,26 @@ export type NgoTask = {
   deliveredAt?: string
   confirmedAt?: string
   confirmationNotes?: string
+  proofOfDeliveryRef?: string
+  proofOfDelivery?: {
+    proofType: 'signature' | 'photo' | 'receipt' | 'multiple' | 'none'
+    signatureData?: string
+    photoUrl?: string
+    receiptUrl?: string
+    capturedAt?: string
+  }
+  proxyHandover?: {
+    isProxy: boolean
+    recipientType: string
+    recipientName?: string
+    recipientPhone?: string
+    reason?: string
+  }
+  quantityTarget?: number
+  quantityDelivered?: number
+  quantityRemaining?: number
+  discrepancyReason?: string
+  discrepancyNotes?: string
   createdAt: string
   updatedAt: string
 }
@@ -200,6 +223,11 @@ export type CreateTaskInput = {
   requirementId?: string
   pickupLocation?: GeoPoint
   destinationLocation?: GeoPoint
+  quantityTarget?: number
+  cargoWeightKg?: number
+  cargoVolumeM3?: number
+  requiredVehicleType?: 'foot' | 'bicycle' | 'two_wheeler' | 'four_wheeler' | 'truck' | 'boat' | 'any'
+  safetyCheckInInterval?: number
 }
 
 type ListResponse<T> = { data: T[]; page: { nextCursor: string | null } }

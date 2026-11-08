@@ -11,7 +11,7 @@ function SectionHeading({ title, description, supportingContent }: SectionHeadin
     <div className="flex flex-wrap items-end justify-between gap-4">
       <div className="grid gap-1">
         <h2 className="type-dash-section text-content">{title}</h2>
-        {description && <p className="text-sm text-muted">{description}</p>}
+        {description && <p className="text-[15.5px] text-muted leading-relaxed">{description}</p>}
       </div>
       {supportingContent}
     </div>

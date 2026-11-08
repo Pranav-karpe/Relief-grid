@@ -73,6 +73,12 @@ export type AdminOverview = {
     rejected?: number
     suspended?: number
   }
+  volunteerVerifications?: {
+    total?: number
+    pending: number
+    approved: number
+    rejected?: number
+  }
   reports: {
     total?: number
     submitted: number
@@ -267,7 +273,19 @@ export type AdminResource = {
   quantityAllocated: number
   unit: string
   condition: string
+  batchNumber?: string
+  coldChainRequired?: boolean
+  quarantineStatus?: string
   expiryDate?: string
+  evidencePhotos?: Array<{
+    storageKey: string
+    url: string
+    fileType: string
+    fileSize: number
+    reviewStatus: string
+    reviewFlags: string[]
+    uploadedAt: string
+  }>
   availabilityStatus: string
   createdAt: string
   updatedAt: string

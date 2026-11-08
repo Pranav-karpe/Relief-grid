@@ -6,6 +6,7 @@ import { userRoles, type UserRole } from '../models/common.js'
 import { register, login, isPublicRole, userRepository, DuplicateEmailError, InvalidCredentialsError } from '../auth/service.js'
 import { ApiError } from '../middleware/api-error.js'
 import { authRateLimiter } from '../middleware/rate-limiter.js'
+import { ensureMongoDBConnected } from '../config/mongodb.js'
 
 const authRouter = Router()
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -56,6 +57,11 @@ authRouter.post('/register', authRateLimiter, async (request, response) => {
     throw new ApiError(400, 'validation_error', 'Phone number format is invalid.')
   }
 
+  const dbConnected = await ensureMongoDBConnected()
+  if (!dbConnected) {
+    throw new ApiError(503, 'service_unavailable', 'Database connection is temporarily unavailable. Please try again in a moment.')
+  }
+
   const organizationName = typeof values.organizationName === 'string' ? values.organizationName.trim() : undefined
   const registrationNumber = typeof values.registrationNumber === 'string' ? values.registrationNumber.trim() : undefined
   const darpanId = typeof values.darpanId === 'string' ? values.darpanId.trim() : undefined
@@ -100,6 +106,11 @@ authRouter.post('/register', authRateLimiter, async (request, response) => {
 
 authRouter.post('/login', authRateLimiter, async (request, response) => {
   const { email, password } = validateCredentials(request.body)
+
+  const dbConnected = await ensureMongoDBConnected()
+  if (!dbConnected) {
+    throw new ApiError(503, 'service_unavailable', 'Database connection is temporarily unavailable. Please try again in a moment.')
+  }
 
   try {
     const result = await login(email, password, userRepository, config.jwtSecret, config.jwtExpiresInSeconds)

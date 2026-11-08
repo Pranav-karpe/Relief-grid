@@ -172,6 +172,14 @@ export async function confirmAllocation(input: AllocationInput): Promise<Allocat
     throw new ApiError(409, 'not_eligible', `Donation is not available for allocation (status: ${donation.availabilityStatus}).`)
   }
 
+  if (donation.quarantineStatus && donation.quarantineStatus !== 'none') {
+    throw new ApiError(409, 'quarantined', `Donation is quarantined for safety inspection (${donation.quarantineStatus}).`)
+  }
+
+  if (donation.expiryDate && new Date(donation.expiryDate) < new Date()) {
+    throw new ApiError(409, 'expired', 'Donation has expired and cannot be allocated.')
+  }
+
   const requirement = await RequirementModel.findById(requirementId)
   if (!requirement) throw new ApiError(404, 'not_found', 'Requirement not found.')
   if (requirement.status !== 'active') {

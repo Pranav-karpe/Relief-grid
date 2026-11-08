@@ -1,0 +1,20 @@
+{
+  "name": "ReliefGrid — Emergency Disaster Coordination",
+  "short_name": "ReliefGrid",
+  "description": "Coordinated Disaster Relief Platform with Offline Support for Field Responders",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090d16",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+

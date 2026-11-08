@@ -127,14 +127,14 @@ export default function AdminUserSection({ token }: Props) {
         )}
         {listState.status === 'ok' && listState.users.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full type-table">
               <thead>
-                <tr className="border-b border-line text-left text-xs text-muted">
-                  <th className="pb-2 pr-4 font-medium">Name & Email</th>
-                  <th className="pb-2 pr-4 font-medium">Role</th>
-                  <th className="pb-2 pr-4 font-medium">Organization / Details</th>
-                  <th className="pb-2 pr-4 font-medium">Account Status</th>
-                  <th className="pb-2 font-medium">Actions</th>
+                <tr className="border-b border-line text-left text-sm font-semibold text-muted">
+                  <th className="pb-3 pr-4">Name & Email</th>
+                  <th className="pb-3 pr-4">Role</th>
+                  <th className="pb-3 pr-4">Organization / Profile</th>
+                  <th className="pb-3 pr-4">Account Status</th>
+                  <th className="pb-3">Lifecycle Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -143,36 +143,37 @@ export default function AdminUserSection({ token }: Props) {
                   const busy = actionState[u._id] ?? false
                   return (
                     <tr key={u._id} className="border-b border-line/40 hover:bg-surface-raised/50 transition-colors">
-                      <td className="py-2.5 pr-4 text-xs">
-                        <p className="font-semibold text-content text-sm">{u.displayName}</p>
-                        <p className="text-muted">{u.email}</p>
+                      <td className="py-3.5 pr-4">
+                        <p className="font-semibold text-content text-base">{u.displayName}</p>
+                        <p className="text-muted text-sm">{u.email}</p>
                         {u.emailVerified && (
-                          <span className="text-[10px] text-emerald-400 font-medium">✓ Email Verified</span>
+                          <span className="text-xs text-emerald-400 font-medium">✓ Email Verified</span>
                         )}
                       </td>
-                      <td className="py-2.5 pr-4">
-                        <Badge tone="neutral" className="capitalize">{u.role}</Badge>
+                      <td className="py-3.5 pr-4">
+                        <Badge tone="neutral" className="capitalize text-xs">{u.role}</Badge>
                       </td>
-                      <td className="py-2.5 pr-4 text-xs text-muted">
+                      <td className="py-3.5 pr-4 text-sm text-muted">
                         {u.role === 'ngo' && u.organizationProfile ? (
                           <div>
-                            <p className="font-medium text-content">{u.organizationProfile.name || 'No org name'}</p>
-                            <p className="text-subtle font-mono text-[11px]">Reg: {u.organizationProfile.registrationNumber || '—'}</p>
-                            <p className="text-[10px] text-accent mt-0.5">Verification: {u.organizationProfile.verificationStatus || 'not_submitted'}</p>
+                            <p className="font-semibold text-content">{u.organizationProfile.name || 'No org name'}</p>
+                            <p className="text-muted font-mono text-xs">Reg: {u.organizationProfile.registrationNumber || '—'}</p>
+                            <p className="text-xs text-orange font-medium mt-0.5">Verification: {u.organizationProfile.verificationStatus || 'not_submitted'}</p>
                           </div>
                         ) : (
-                          <span className="text-subtle text-xs">Individual account</span>
+                          <span className="text-muted text-sm">Individual Citizen</span>
                         )}
                       </td>
-                      <td className="py-2.5 pr-4">
-                        <Badge tone={statusTone(u.accountStatus)}>{u.accountStatus}</Badge>
+                      <td className="py-3.5 pr-4">
+                        <Badge tone={statusTone(u.accountStatus)} className="text-xs">{u.accountStatus}</Badge>
                       </td>
-                      <td className="py-2.5">
-                        <div className="flex flex-wrap gap-1">
+                      <td className="py-3.5">
+                        <div className="flex flex-wrap gap-1.5">
                           {allowed.map((s) => (
                             <Button
                               key={s}
                               variant={s === 'suspended' || s === 'closed' ? 'danger' : 'outline'}
+                              className="text-xs h-8 px-3"
                               loading={busy}
                               disabled={busy}
                               onClick={() => setConfirm({ userId: u._id, newStatus: s })}
@@ -180,7 +181,7 @@ export default function AdminUserSection({ token }: Props) {
                               {s}
                             </Button>
                           ))}
-                          {allowed.length === 0 && <span className="text-xs text-muted">—</span>}
+                          {allowed.length === 0 && <span className="text-sm text-muted">—</span>}
                         </div>
                       </td>
                     </tr>

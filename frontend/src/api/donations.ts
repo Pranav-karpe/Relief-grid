@@ -11,6 +11,16 @@ export type DonationStatus =
 
 export type GeoPoint = { type: 'Point'; coordinates: [number, number] }
 
+export type EvidencePhoto = {
+  storageKey: string
+  url: string
+  fileType: string
+  fileSize: number
+  reviewStatus: 'clean' | 'flagged' | 'rejected' | 'pending'
+  reviewFlags: string[]
+  uploadedAt: string
+}
+
 export type Donation = {
   _id: string
   donor: string
@@ -21,7 +31,12 @@ export type Donation = {
   quantityAllocated: number
   unit: string
   condition: DonationCondition
+  batchNumber?: string
+  manufacturingDate?: string
   expiryDate?: string
+  coldChainRequired?: boolean
+  quarantineStatus?: 'none' | 'quarantined_expired' | 'quarantined_safety'
+  evidencePhotos?: EvidencePhoto[]
   location: GeoPoint
   availabilityStatus: DonationStatus
   createdAt: string
@@ -35,7 +50,11 @@ export type CreateDonationInput = {
   unit: string
   condition: DonationCondition
   location: GeoPoint
+  batchNumber?: string
+  manufacturingDate?: string
   expiryDate?: string
+  coldChainRequired?: boolean
+  photos?: Array<{ data: string; name?: string }>
 }
 
 export type PatchDonationInput = {
@@ -44,14 +63,17 @@ export type PatchDonationInput = {
   quantity?: number
   unit?: string
   condition?: DonationCondition
+  batchNumber?: string
+  manufacturingDate?: string | null
   expiryDate?: string | null
+  coldChainRequired?: boolean
   availabilityStatus?: 'available' | 'cancelled'
 }
 
 type ListResponse = { data: Donation[]; page: { nextCursor: string | null } }
 
 async function parseResponse<T>(res: Response): Promise<T> {
-  const json = await res.json().catch(() => ({})) as { data?: T } & { code?: string; message?: string }
+  const json = (await res.json().catch(() => ({}))) as { data?: T } & { code?: string; message?: string }
   if (!res.ok) {
     throw new AuthApiError(
       json.code ?? 'api_error',
@@ -63,7 +85,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
 }
 
 async function parseListResponse(res: Response): Promise<ListResponse> {
-  const json = await res.json().catch(() => ({})) as ListResponse & { code?: string; message?: string }
+  const json = (await res.json().catch(() => ({}))) as ListResponse & { code?: string; message?: string }
   if (!res.ok) {
     throw new AuthApiError(
       (json as { code?: string }).code ?? 'api_error',
@@ -79,6 +101,19 @@ export async function createDonation(token: string, input: CreateDonationInput):
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
+  })
+  return parseResponse<Donation>(res)
+}
+
+export async function uploadDonationPhotos(
+  token: string,
+  donationId: string,
+  photos: Array<{ data: string; name?: string }>,
+): Promise<Donation> {
+  const res = await fetch(`/api/donations/${donationId}/photos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ photos }),
   })
   return parseResponse<Donation>(res)
 }

@@ -3,6 +3,9 @@ import { Types } from 'mongoose'
 import { DonationModel } from '../models/donation.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { ApiError } from '../middleware/api-error.js'
+import { imageVerificationService } from '../services/image-verification.service.js'
+import { storageService } from '../services/storage.service.js'
+import { eventBroadcaster } from '../services/event-broadcaster.js'
 
 const donationsRouter = Router()
 
@@ -21,6 +24,76 @@ function body(raw: unknown): Record<string, unknown> {
   return raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 }
 
+interface PhotoInput {
+  data: string
+  name?: string
+}
+
+async function processPhotoUploads(rawPhotos: unknown[]): Promise<
+  Array<{
+    storageKey: string
+    url: string
+    fileType: string
+    fileSize: number
+    reviewStatus: 'clean' | 'flagged' | 'rejected' | 'pending'
+    reviewFlags: string[]
+    uploadedAt: Date
+  }>
+> {
+  if (rawPhotos.length > 3) {
+    throw new ApiError(400, 'validation_error', 'A maximum of 3 evidence photos can be uploaded per donation.')
+  }
+
+  const processedPhotos = []
+  const fingerprints = new Set<string>()
+
+  for (let idx = 0; idx < rawPhotos.length; idx++) {
+    const item = rawPhotos[idx] as PhotoInput
+    if (!item || typeof item.data !== 'string') {
+      throw new ApiError(400, 'validation_error', `Invalid photo payload at index ${idx}.`)
+    }
+
+    // Strip base64 data prefix if present (e.g. data:image/jpeg;base64,...)
+    const base64Data = item.data.replace(/^data:image\/[a-z0-9.+_-]+;base64,/i, '')
+    const buffer = Buffer.from(base64Data, 'base64')
+    const originalName = typeof item.name === 'string' && item.name.length > 0 ? item.name : `evidence_${idx + 1}.jpg`
+
+    const verification = imageVerificationService.verifyAndSanitize(buffer, originalName)
+    if (!verification.isValid) {
+      throw new ApiError(400, 'validation_error', verification.errorMessage ?? `Photo ${idx + 1} is invalid.`)
+    }
+
+    // Check for duplicate photos in the same upload batch
+    const fingerprint = imageVerificationService.computeFingerprint(verification.sanitizedBuffer)
+    if (fingerprints.has(fingerprint)) {
+      if (!verification.reviewFlags.includes('SIMILAR_IMAGE')) {
+        verification.reviewFlags.push('SIMILAR_IMAGE')
+      }
+      verification.reviewStatus = 'flagged'
+    } else {
+      fingerprints.add(fingerprint)
+    }
+
+    const uploadResult = await storageService.upload(
+      verification.sanitizedBuffer,
+      originalName,
+      verification.fileType,
+    )
+
+    processedPhotos.push({
+      storageKey: uploadResult.storageKey,
+      url: uploadResult.url,
+      fileType: verification.fileType,
+      fileSize: uploadResult.sizeBytes,
+      reviewStatus: verification.reviewStatus,
+      reviewFlags: verification.reviewFlags,
+      uploadedAt: new Date(),
+    })
+  }
+
+  return processedPhotos
+}
+
 function validateCreateInput(raw: unknown) {
   const b = body(raw)
 
@@ -29,6 +102,8 @@ function validateCreateInput(raw: unknown) {
   const unit = typeof b.unit === 'string' ? b.unit.trim() : ''
   const condition = b.condition
   const quantity = Number(b.quantity)
+  const batchNumber = typeof b.batchNumber === 'string' ? b.batchNumber.trim() : undefined
+  const coldChainRequired = Boolean(b.coldChainRequired)
 
   if (resourceCategory.length < 1 || resourceCategory.length > 80) {
     throw new ApiError(400, 'validation_error', 'resourceCategory must be between 1 and 80 characters.')
@@ -64,7 +139,15 @@ function validateCreateInput(raw: unknown) {
     throw new ApiError(400, 'validation_error', 'coordinates must be valid [longitude, latitude] values.')
   }
 
-  // Optional expiryDate
+  // Optional dates
+  let manufacturingDate: Date | undefined
+  if (b.manufacturingDate !== undefined && b.manufacturingDate !== null && b.manufacturingDate !== '') {
+    manufacturingDate = new Date(b.manufacturingDate as string)
+    if (isNaN(manufacturingDate.getTime())) {
+      throw new ApiError(400, 'validation_error', 'manufacturingDate must be a valid ISO date string.')
+    }
+  }
+
   let expiryDate: Date | undefined
   if (b.expiryDate !== undefined && b.expiryDate !== null && b.expiryDate !== '') {
     expiryDate = new Date(b.expiryDate as string)
@@ -73,26 +156,88 @@ function validateCreateInput(raw: unknown) {
     }
   }
 
+  const rawPhotos = Array.isArray(b.photos) ? b.photos : []
+
   return {
     resourceCategory,
     description,
     quantity,
     unit,
     condition,
+    batchNumber,
+    coldChainRequired,
+    manufacturingDate,
+    expiryDate,
+    rawPhotos,
     location: { type: 'Point' as const, coordinates: [lng, lat] as [number, number] },
-    ...(expiryDate ? { expiryDate } : {}),
   }
 }
 
 // POST /api/donations — create a donation (donor only)
 donationsRouter.post('/', requireAuth, requireRoles('donor'), async (req, res) => {
   const validated = validateCreateInput(req.body)
+
+  const evidencePhotos = await processPhotoUploads(validated.rawPhotos)
+
+  // Perishable expiry check
+  const isExpired = validated.expiryDate ? validated.expiryDate.getTime() < Date.now() : false
+  const availabilityStatus = isExpired ? 'expired' : 'available'
+  const quarantineStatus = isExpired ? 'quarantined_expired' : 'none'
+
+  const { rawPhotos, ...docData } = validated
+
   const donation = await DonationModel.create({
-    ...validated,
+    ...docData,
     donor: new Types.ObjectId(req.auth!.userId),
-    availabilityStatus: 'available',
+    evidencePhotos,
+    availabilityStatus,
+    quarantineStatus,
   })
+
+  eventBroadcaster.broadcast({
+    type: 'DONATION_CREATED',
+    payload: {
+      donationId: donation._id,
+      resourceCategory: donation.resourceCategory,
+      quantity: donation.quantity,
+      donorId: req.auth!.userId,
+    },
+    targetRoles: ['admin', 'ngo', 'donor'],
+  })
+
   res.status(201).json({ data: donation })
+})
+
+// POST /api/donations/:donationId/photos — append photo evidence (donor only)
+donationsRouter.post('/:donationId/photos', requireAuth, requireRoles('donor'), async (req, res) => {
+  const donationId = String(req.params.donationId)
+  if (!Types.ObjectId.isValid(donationId)) {
+    throw new ApiError(404, 'not_found', 'Donation not found.')
+  }
+
+  const donation = await DonationModel.findOne({
+    _id: donationId,
+    donor: new Types.ObjectId(req.auth!.userId),
+  })
+
+  if (!donation) throw new ApiError(404, 'not_found', 'Donation not found.')
+  if (donation.availabilityStatus !== 'available') {
+    throw new ApiError(409, 'invalid_state', 'Photos can only be added to available donations.')
+  }
+
+  const existingCount = donation.evidencePhotos?.length ?? 0
+  const b = body(req.body)
+  const incoming = Array.isArray(b.photos) ? b.photos : []
+
+  if (existingCount + incoming.length > 3) {
+    throw new ApiError(400, 'validation_error', `A donation cannot exceed 3 photos in total. Currently has ${existingCount}.`)
+  }
+
+  const newPhotos = await processPhotoUploads(incoming)
+  donation.evidencePhotos.push(...newPhotos)
+  await donation.save()
+
+  res.status(200).json({ data: donation })
 })
 
 // GET /api/donations/mine — list own donations (donor only)
@@ -159,7 +304,7 @@ donationsRouter.patch('/:donationId', requireAuth, requireRoles('donor'), async 
   const b = body(req.body)
 
   // Reject protected fields
-  const forbidden = ['donor', 'quantityReserved', 'quantityAllocated', 'matchedRequirements'] as const
+  const forbidden = ['donor', 'quantityReserved', 'quantityAllocated', 'matchedRequirements', 'evidencePhotos'] as const
   for (const key of forbidden) {
     if (key in b) {
       throw new ApiError(400, 'validation_error', `Field "${key}" cannot be updated through this endpoint.`)
@@ -209,6 +354,12 @@ donationsRouter.patch('/:donationId', requireAuth, requireRoles('donor'), async 
     if (!isCondition(b.condition)) throw new ApiError(400, 'validation_error', `condition must be one of: ${ALLOWED_CONDITIONS.join(', ')}.`)
     allowed.condition = b.condition
   }
+  if (b.batchNumber !== undefined) {
+    allowed.batchNumber = typeof b.batchNumber === 'string' ? b.batchNumber.trim() : undefined
+  }
+  if (b.coldChainRequired !== undefined) {
+    allowed.coldChainRequired = Boolean(b.coldChainRequired)
+  }
   if ('availabilityStatus' in b) {
     allowed.availabilityStatus = b.availabilityStatus
   }
@@ -219,6 +370,11 @@ donationsRouter.patch('/:donationId', requireAuth, requireRoles('donor'), async 
       const d = new Date(b.expiryDate as string)
       if (isNaN(d.getTime())) throw new ApiError(400, 'validation_error', 'expiryDate must be a valid ISO date string.')
       allowed.expiryDate = d
+      // Expiry quarantine check
+      if (d.getTime() < Date.now()) {
+        allowed.availabilityStatus = 'expired'
+        allowed.quarantineStatus = 'quarantined_expired'
+      }
     }
   }
 
@@ -240,7 +396,7 @@ donationsRouter.patch('/:donationId', requireAuth, requireRoles('donor'), async 
   const updated = await DonationModel.findOneAndUpdate(
     { _id: donationId, donor: new Types.ObjectId(req.auth!.userId) },
     updateOp,
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   ).lean()
 
   if (!updated) throw new ApiError(404, 'not_found', 'Donation not found.')

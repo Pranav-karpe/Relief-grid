@@ -5,6 +5,7 @@ import Card from '../ui/Card'
 import SectionHeading from '../ui/SectionHeading'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
+import { useLiveSync } from '../../lib/live-sync'
 
 type BadgeTone = 'neutral' | 'warning' | 'success' | 'error' | 'info'
 
@@ -55,6 +56,13 @@ export default function VolunteerTaskList({ token, onSelectTask }: Props) {
 
   useEffect(() => { load() }, [load])
 
+  // Live real-time sync when a new task is assigned by an NGO
+  useLiveSync((event) => {
+    if (event.type === 'TASK_ASSIGNED' || event.type === 'DELIVERY_UPDATED') {
+      load()
+    }
+  })
+
   async function handleAccept(taskId: string) {
     setActionLoading(taskId)
     setActionError(null)
@@ -82,40 +90,48 @@ export default function VolunteerTaskList({ token, onSelectTask }: Props) {
   }
 
   return (
-    <Card>
-      <SectionHeading title="My tasks" description="Tasks assigned to you by coordinators." />
+    <Card className="p-6 md:p-8 bg-surface border-line glow-card">
+      <SectionHeading
+        title="Field Missions & Transit Tasks"
+        description="Assigned disaster relief transport, supply mobilization, and delivery verification tasks."
+      />
 
       {actionError && (
-        <p className="mt-3 rounded-lg border border-error/30 bg-error/10 px-3 py-2 text-sm text-error" role="alert">
+        <div className="mt-4 rounded-xl border border-error/30 bg-error/10 p-3.5 text-sm font-medium text-error" role="alert">
           {actionError}
-        </p>
+        </div>
       )}
 
       {loading ? (
-        <p className="mt-6 text-sm text-muted">Loading tasks…</p>
+        <p className="mt-8 type-body text-muted">Loading assigned field tasks…</p>
       ) : error ? (
         <div className="mt-6 grid gap-3">
-          <p className="text-sm text-error" role="alert">{error}</p>
-          <Button variant="secondary" onClick={() => load()}>Retry</Button>
+          <p className="text-sm font-medium text-error" role="alert">{error}</p>
+          <Button variant="secondary" className="h-10 px-4 text-xs font-semibold w-fit" onClick={() => load()}>Retry</Button>
         </div>
       ) : tasks.length === 0 ? (
-        <p className="mt-6 text-sm text-muted">No tasks assigned yet. Tasks are assigned by coordinators when donations are matched to requirements.</p>
+        <div className="mt-8 rounded-2xl border border-dashed border-line p-10 text-center">
+          <p className="type-card-heading text-content">No active field tasks assigned</p>
+          <p className="type-sm text-muted mt-1.5">
+            Tasks will be dispatched by accredited NGO coordinators in your sector as relief supplies are matched.
+          </p>
+        </div>
       ) : (
-        <ul className="mt-4 grid gap-3">
+        <ul className="mt-6 space-y-4">
           {tasks.map((task) => {
             const busy = actionLoading === task._id || actionLoading === `decline-${task._id}`
             return (
               <li key={task._id}>
-                <div className="rounded-lg border border-line bg-surface-raised p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="rounded-xl border border-line bg-surface-raised p-5 md:p-6 transition-all hover:border-orange/60">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <button
                       type="button"
                       onClick={() => onSelectTask(task)}
-                      className="text-left font-medium text-content hover:text-accent transition-colors focus-visible:outline-none"
+                      className="text-left type-card-heading text-content hover:text-orange transition-colors focus-visible:outline-none"
                     >
-                      {task.taskDetails.slice(0, 80)}{task.taskDetails.length > 80 ? '…' : ''}
+                      {task.taskDetails}
                     </button>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Badge tone={ASSIGNMENT_TONE[task.assignmentStatus] ?? 'neutral'}>
                         {task.assignmentStatus.replace('_', ' ')}
                       </Badge>
@@ -124,20 +140,24 @@ export default function VolunteerTaskList({ token, onSelectTask }: Props) {
                       </Badge>
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-muted">{new Date(task.createdAt).toLocaleDateString()}</p>
+                  <p className="mt-2 type-sm text-muted font-mono">
+                    Assigned on: {new Date(task.createdAt).toLocaleString()}
+                  </p>
 
                   {(task.assignmentStatus === 'assigned' || task.assignmentStatus === 'reassigned') && (
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-4 flex flex-wrap gap-3">
                       <Button
                         variant="primary"
+                        className="h-10 px-5 text-sm font-semibold"
                         onClick={() => handleAccept(task._id)}
                         loading={actionLoading === task._id}
                         disabled={busy}
                       >
-                        Accept
+                        Accept Mission
                       </Button>
                       <Button
                         variant="ghost"
+                        className="h-10 px-4 text-sm font-semibold text-error hover:bg-error/10"
                         onClick={() => handleDecline(task._id)}
                         loading={actionLoading === `decline-${task._id}`}
                         disabled={busy}
@@ -148,9 +168,13 @@ export default function VolunteerTaskList({ token, onSelectTask }: Props) {
                   )}
 
                   {task.assignmentStatus === 'accepted' && (
-                    <div className="mt-3">
-                      <Button variant="secondary" onClick={() => onSelectTask(task)}>
-                        Update progress
+                    <div className="mt-4">
+                      <Button
+                        variant="secondary"
+                        className="h-10 px-5 text-sm font-semibold"
+                        onClick={() => onSelectTask(task)}
+                      >
+                        Log Checkpoints & Proof of Delivery →
                       </Button>
                     </div>
                   )}
@@ -162,9 +186,9 @@ export default function VolunteerTaskList({ token, onSelectTask }: Props) {
       )}
 
       {nextCursor && !loading && (
-        <div className="mt-4">
-          <Button variant="secondary" onClick={() => load(nextCursor)} loading={loadingMore} disabled={loadingMore}>
-            Load more
+        <div className="mt-6 pt-4 border-t border-line">
+          <Button variant="secondary" className="h-10 px-5 text-sm font-semibold" onClick={() => load(nextCursor)} loading={loadingMore} disabled={loadingMore}>
+            Load more tasks
           </Button>
         </div>
       )}

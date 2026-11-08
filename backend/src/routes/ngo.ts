@@ -8,6 +8,9 @@ import { VolunteerTaskModel } from '../models/task.js'
 import { requireAuth, requireRoles, requireVerifiedNgo } from '../middleware/auth.js'
 import { ApiError } from '../middleware/api-error.js'
 import { evaluateNgoRegistration } from '../services/ngo-verification.service.js'
+import { deliveryReconciliationService, type DiscrepancyReason } from '../services/delivery-reconciliation.service.js'
+import { getOverdueVolunteerTasks } from '../services/volunteer-safety.service.js'
+import { eventBroadcaster } from '../services/event-broadcaster.js'
 
 const ngoRouter = Router()
 
@@ -363,6 +366,17 @@ ngoRouter.post('/requirements', requireAuth, requireRoles('ngo'), requireVerifie
     ...(neededBy ? { neededBy } : {}),
   })
 
+  eventBroadcaster.broadcast({
+    type: 'REQUIREMENT_CREATED',
+    payload: {
+      requirementId: requirement._id,
+      resourceCategory: requirement.resourceCategory,
+      quantityRequested: requirement.quantityRequested,
+      ngoId: req.auth!.userId,
+    },
+    targetRoles: ['admin', 'ngo', 'donor'],
+  })
+
   res.status(201).json({ data: requirement })
 })
 
@@ -693,6 +707,17 @@ ngoRouter.post('/tasks', requireAuth, requireRoles('ngo'), requireVerifiedNgo, a
 
   const assignedLocation = destinationLocation || pickupLocation || { type: 'Point', coordinates: [0, 0] }
 
+  const quantityTarget = Number.isFinite(Number(b.quantityTarget)) ? Number(b.quantityTarget) : undefined
+  const cargoWeightKg = Number.isFinite(Number(b.cargoWeightKg)) ? Number(b.cargoWeightKg) : undefined
+  const cargoVolumeM3 = Number.isFinite(Number(b.cargoVolumeM3)) ? Number(b.cargoVolumeM3) : undefined
+  type VehicleType = 'foot' | 'bicycle' | 'two_wheeler' | 'four_wheeler' | 'truck' | 'boat' | 'any'
+  const validVehicles: readonly VehicleType[] = ['foot', 'bicycle', 'two_wheeler', 'four_wheeler', 'truck', 'boat', 'any']
+  const requiredVehicleType: VehicleType =
+    typeof b.requiredVehicleType === 'string' && (validVehicles as readonly string[]).includes(b.requiredVehicleType)
+      ? (b.requiredVehicleType as VehicleType)
+      : 'any'
+  const safetyInterval = Number(b.safetyCheckInInterval) || 30
+
   const task = await VolunteerTaskModel.create({
     volunteer: new Types.ObjectId(volunteerId),
     createdBy: new Types.ObjectId(req.auth!.userId),
@@ -708,6 +733,16 @@ ngoRouter.post('/tasks', requireAuth, requireRoles('ngo'), requireVerifiedNgo, a
     pickupLocation,
     destinationLocation,
     taskDetails,
+    quantityTarget,
+    quantityRemaining: quantityTarget,
+    requiredVehicleType,
+    cargoWeightKg,
+    cargoVolumeM3,
+    safetyCheckIn: {
+      enabled: false,
+      intervalMinutes: safetyInterval,
+      history: [],
+    },
     history: [
       {
         status: 'assigned',
@@ -742,6 +777,18 @@ ngoRouter.post('/tasks', requireAuth, requireRoles('ngo'), requireVerifiedNgo, a
     })
   }
 
+  eventBroadcaster.broadcast({
+    type: 'TASK_ASSIGNED',
+    payload: {
+      taskId: task._id,
+      volunteerId: task.volunteer,
+      assignedByNgo: req.auth!.userId,
+      taskDetails: task.taskDetails,
+      priority: task.priority,
+    },
+    targetRoles: ['admin', 'ngo', 'volunteer'],
+  })
+
   res.status(201).json({ data: task })
 })
 
@@ -772,6 +819,16 @@ ngoRouter.get('/tasks', requireAuth, requireRoles('ngo'), requireVerifiedNgo, as
     .sort({ createdAt: -1 })
     .lean()
 
+  res.status(200).json({ data: tasks })
+})
+
+// ---------------------------------------------------------------------------
+// GET /api/ngo/tasks/overdue — get tasks with overdue safety check-ins
+// (REQUIRES VERIFIED NGO — OWNING NGO ONLY)
+// ---------------------------------------------------------------------------
+
+ngoRouter.get('/tasks/overdue', requireAuth, requireRoles('ngo'), requireVerifiedNgo, async (req, res) => {
+  const tasks = await getOverdueVolunteerTasks({ ngoId: req.auth!.userId })
   res.status(200).json({ data: tasks })
 })
 
@@ -816,104 +873,47 @@ ngoRouter.post('/tasks/:taskId/confirm-delivery', requireAuth, requireRoles('ngo
     throw new ApiError(404, 'not_found', 'Task not found.')
   }
 
-  const task = await VolunteerTaskModel.findById(taskId)
-  if (!task) {
-    throw new ApiError(404, 'not_found', 'Task not found.')
-  }
-
-  // Ensure this task belongs to the calling NGO
-  const isOwner =
-    (task.assignedByNgo && task.assignedByNgo.toString() === req.auth!.userId) ||
-    (task.createdBy && task.createdBy.toString() === req.auth!.userId)
-
-  if (!isOwner) {
-    throw new ApiError(403, 'forbidden', 'You can only confirm tasks assigned by your organisation.')
-  }
-
   const b = body(req.body)
   const action = b.action // 'confirm' | 'dispute'
   const notes = typeof b.notes === 'string' ? b.notes.trim() : ''
+  const deliveredQuantity = b.deliveredQuantity !== undefined ? Number(b.deliveredQuantity) : undefined
+  const discrepancyReason = typeof b.discrepancyReason === 'string' ? (b.discrepancyReason as DiscrepancyReason) : undefined
 
   if (action !== 'confirm' && action !== 'dispute') {
     throw new ApiError(400, 'validation_error', 'action must be either "confirm" or "dispute".')
   }
 
-  if (action === 'confirm') {
-    task.confirmationStatus = 'confirmed'
-    task.deliveryStatus = 'delivered'
-    task.confirmedAt = new Date()
-    task.confirmedBy = new Types.ObjectId(req.auth!.userId)
-    task.confirmationNotes = notes || 'Delivery confirmed by NGO'
+  const result = await deliveryReconciliationService.reconcileDelivery({
+    taskId,
+    callerUserId: req.auth!.userId,
+    action,
+    deliveredQuantity,
+    discrepancyReason,
+    notes,
+  })
 
-    task.history.push({
-      status: 'confirmed',
-      changedBy: new Types.ObjectId(req.auth!.userId),
-      changedAt: new Date(),
-      reason: notes || 'Delivery confirmed by NGO',
-    })
+  eventBroadcaster.broadcast({
+    type: 'DELIVERY_CONFIRMED',
+    payload: {
+      taskId: result.task._id,
+      reconciled: result.reconciled,
+      action,
+      ngoId: req.auth!.userId,
+    },
+    targetRoles: ['admin', 'ngo', 'citizen', 'donor', 'volunteer'],
+  })
 
-    await task.save()
-
-    // Decrement volunteer workload
-    if (task.volunteer) {
-      await UserModel.findByIdAndUpdate(task.volunteer, {
-        $inc: { 'volunteerProfile.currentWorkload': -1 },
-      })
-    }
-
-    // Resolve report if linked
-    if (task.report) {
-      await ReportModel.findByIdAndUpdate(task.report, {
-        $set: {
-          status: 'resolved',
-          resolvedAt: new Date(),
-          resolvedBy: new Types.ObjectId(req.auth!.userId),
-          resolutionNote: notes || 'Delivery confirmed by NGO. Relief completed.',
-        },
-        $push: {
-          timeline: {
-            stage: 'delivered',
-            title: 'Delivery Confirmed & Resolved',
-            description: notes || 'NGO confirmed successful field delivery. Citizen distress request is resolved.',
-            timestamp: new Date(),
-            actorRole: 'ngo',
-          },
-        },
-      })
-    }
-  } else {
-    // Dispute
-    task.confirmationStatus = 'disputed'
-    task.confirmedAt = new Date()
-    task.confirmedBy = new Types.ObjectId(req.auth!.userId)
-    task.confirmationNotes = notes || 'Delivery disputed by NGO'
-
-    task.history.push({
-      status: 'disputed',
-      changedBy: new Types.ObjectId(req.auth!.userId),
-      changedAt: new Date(),
-      reason: notes || 'Delivery disputed by NGO',
-    })
-
-    await task.save()
-
-    // Flag on report timeline if linked
-    if (task.report) {
-      await ReportModel.findByIdAndUpdate(task.report, {
-        $push: {
-          timeline: {
-            stage: 'disputed',
-            title: 'Delivery Disputed by NGO',
-            description: notes || 'NGO raised a dispute regarding the relief delivery.',
-            timestamp: new Date(),
-            actorRole: 'ngo',
-          },
-        },
-      })
-    }
-  }
-
-  res.status(200).json({ data: task })
+  res.status(200).json({
+    data: result.task,
+    reconciled: result.reconciled,
+    alreadyReconciled: result.alreadyReconciled,
+    metrics: {
+      quantityTarget: result.quantityTarget,
+      quantityDelivered: result.quantityDelivered,
+      quantityRemaining: result.quantityRemaining,
+      discrepancyReason: result.discrepancyReason,
+    },
+  })
 })
 
 export default ngoRouter

@@ -14,9 +14,13 @@ export type AppConfig = {
   mongodbUri: string
   jwtSecret: string
   jwtExpiresInSeconds: number
-  resendApiKey?: string
+  smtpHost: string
+  smtpPort: number
+  smtpSecure: boolean
+  smtpUser?: string
+  smtpPass?: string
+  emailFrom?: string
   emailFromName?: string
-  emailFromAddress?: string
 }
 
 function parsePort(value: string | undefined): number {
@@ -74,9 +78,13 @@ export function loadConfig(): AppConfig {
     mongodbUri: parseMongoDbUri(process.env.MONGODB_URI),
     jwtSecret: parseJwtSecret(process.env.JWT_SECRET),
     jwtExpiresInSeconds: parseJwtExpiresInSeconds(process.env.JWT_EXPIRES_IN_SECONDS),
-    resendApiKey: process.env.RESEND_API_KEY,
+    smtpHost: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
+    smtpPort: Number(process.env.SMTP_PORT) || 587,
+    smtpSecure: process.env.SMTP_SECURE === 'true',
+    smtpUser: process.env.SMTP_USER || undefined,
+    smtpPass: process.env.SMTP_PASS || undefined,
+    emailFrom: process.env.EMAIL_FROM || process.env.EMAIL_FROM_ADDRESS || undefined,
     emailFromName: process.env.EMAIL_FROM_NAME || 'ReliefGrid Team',
-    emailFromAddress: process.env.EMAIL_FROM_ADDRESS || 'notifications@dietms.org',
   }
 }
 

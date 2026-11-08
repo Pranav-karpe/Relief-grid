@@ -4,6 +4,8 @@ import { ReportModel } from '../models/report.js'
 import { requireAuth, requireRoles } from '../middleware/auth.js'
 import { ApiError } from '../middleware/api-error.js'
 import { evaluateReportAuthenticity } from '../services/citizen-risk.service.js'
+import { incidentService } from '../services/incident.service.js'
+import { eventBroadcaster } from '../services/event-broadcaster.js'
 
 const reportsRouter = Router()
 
@@ -142,6 +144,25 @@ reportsRouter.post('/', requireAuth, requireRoles('citizen'), async (req, res) =
       possibleDuplicates: riskAssessment.possibleDuplicates.map((id) => new Types.ObjectId(id)),
     },
     timeline: initialTimeline,
+  })
+
+  if (report.status === 'submitted') {
+    incidentService.clusterReport(report).catch((err) => {
+      console.warn('[incidentService] clustering error:', err)
+    })
+  }
+
+  eventBroadcaster.broadcast({
+    type: 'REPORT_CREATED',
+    payload: {
+      reportId: report._id,
+      title: report.title,
+      needCategory: report.needCategory,
+      urgency: report.urgency,
+      status: report.status,
+      reporterId: userId,
+    },
+    targetRoles: ['admin', 'ngo', 'citizen'],
   })
 
   res.status(201).json({ data: report })

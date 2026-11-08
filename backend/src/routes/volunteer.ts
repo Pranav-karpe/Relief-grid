@@ -5,6 +5,7 @@ import { ReportModel } from '../models/report.js'
 import { UserModel } from '../models/user.js'
 import { requireAuth, requireRoles, requireVerifiedVolunteer } from '../middleware/auth.js'
 import { ApiError } from '../middleware/api-error.js'
+import { eventBroadcaster } from '../services/event-broadcaster.js'
 
 const volunteerRouter = Router()
 
@@ -189,6 +190,20 @@ volunteerRouter.post('/tasks/:taskId/accept', requireAuth, requireRoles('volunte
     })
   }
 
+  if (updated) {
+    eventBroadcaster.broadcast({
+      type: 'DELIVERY_UPDATED',
+      payload: {
+        taskId: updated._id,
+        deliveryStatus: updated.deliveryStatus,
+        pickupStatus: updated.pickupStatus,
+        assignmentStatus: updated.assignmentStatus,
+        volunteerId: req.auth!.userId,
+      },
+      targetRoles: ['admin', 'ngo', 'citizen', 'volunteer'],
+    })
+  }
+
   res.status(200).json({ data: updated })
 })
 
@@ -232,6 +247,20 @@ volunteerRouter.post('/tasks/:taskId/decline', requireAuth, requireRoles('volunt
   ).lean()
 
   if (!updated) throw new ApiError(409, 'conflict', 'Task state changed concurrently. Please refresh and try again.')
+  if (updated) {
+    eventBroadcaster.broadcast({
+      type: 'DELIVERY_UPDATED',
+      payload: {
+        taskId: updated._id,
+        deliveryStatus: updated.deliveryStatus,
+        pickupStatus: updated.pickupStatus,
+        assignmentStatus: updated.assignmentStatus,
+        volunteerId: req.auth!.userId,
+      },
+      targetRoles: ['admin', 'ngo', 'citizen', 'volunteer'],
+    })
+  }
+
   res.status(200).json({ data: updated })
 })
 
@@ -303,6 +332,81 @@ volunteerRouter.patch('/tasks/:taskId/progress', requireAuth, requireRoles('volu
     allowed.proofOfDeliveryRef = b.proofOfDeliveryRef.trim()
   }
 
+  // Multi-modal Proof of Delivery
+  if (b.proofOfDelivery !== undefined) {
+    if (
+      b.deliveryStatus !== 'delivered' &&
+      b.deliveryStatus !== 'delivered_pending_confirmation' &&
+      task.deliveryStatus !== 'delivered_pending_confirmation'
+    ) {
+      throw new ApiError(400, 'validation_error', 'proofOfDelivery can only be set when marking or confirming delivery.')
+    }
+    const pod = body(b.proofOfDelivery)
+    const validProofTypes = ['signature', 'photo', 'receipt', 'multiple', 'none']
+    const proofType = typeof pod.proofType === 'string' && validProofTypes.includes(pod.proofType) ? pod.proofType : 'signature'
+
+    allowed.proofOfDelivery = {
+      proofType,
+      signatureData: typeof pod.signatureData === 'string' ? pod.signatureData : undefined,
+      photoUrl: typeof pod.photoUrl === 'string' ? pod.photoUrl : undefined,
+      receiptUrl: typeof pod.receiptUrl === 'string' ? pod.receiptUrl : undefined,
+      capturedAt: new Date(),
+    }
+  }
+
+  // Proxy Handover
+  if (b.proxyHandover !== undefined) {
+    const ph = body(b.proxyHandover)
+    const validRecipientTypes = [
+      'primary_recipient',
+      'proxy_coordinator',
+      'community_shelter_lead',
+      'family_member',
+      'local_authority',
+    ]
+    const recipientType =
+      typeof ph.recipientType === 'string' && validRecipientTypes.includes(ph.recipientType)
+        ? ph.recipientType
+        : 'proxy_coordinator'
+
+    allowed.proxyHandover = {
+      isProxy: Boolean(ph.isProxy ?? true),
+      recipientType,
+      recipientName: typeof ph.recipientName === 'string' ? ph.recipientName.trim().slice(0, 120) : '',
+      recipientPhone: typeof ph.recipientPhone === 'string' ? ph.recipientPhone.trim().slice(0, 30) : '',
+      reason: typeof ph.reason === 'string' ? ph.reason.trim().slice(0, 500) : '',
+    }
+  }
+
+  // Quantity Discrepancy & Partial Delivery
+  if (b.quantityDelivered !== undefined) {
+    const qDelivered = Number(b.quantityDelivered)
+    if (!Number.isFinite(qDelivered) || qDelivered < 0) {
+      throw new ApiError(400, 'validation_error', 'quantityDelivered must be a non-negative number.')
+    }
+    allowed.quantityDelivered = qDelivered
+    if (task.quantityTarget !== undefined && task.quantityTarget !== null) {
+      allowed.quantityRemaining = Math.max(0, task.quantityTarget - qDelivered)
+    }
+    if (b.discrepancyReason !== undefined) {
+      const validReasons = [
+        'none',
+        'damaged_in_transit',
+        'partial_recipient_capacity',
+        'shortage_at_pickup',
+        'transport_capacity_limit',
+        'other',
+      ]
+      allowed.discrepancyReason =
+        typeof b.discrepancyReason === 'string' && validReasons.includes(b.discrepancyReason)
+          ? b.discrepancyReason
+          : 'none'
+    }
+    if (typeof b.discrepancyNotes === 'string') {
+      allowed.discrepancyNotes = b.discrepancyNotes.trim().slice(0, 1000)
+    }
+  }
+
   if (Object.keys(allowed).length === 0) {
     throw new ApiError(400, 'validation_error', 'No updatable fields provided.')
   }
@@ -355,6 +459,20 @@ volunteerRouter.patch('/tasks/:taskId/progress', requireAuth, requireRoles('volu
     }
   }
 
+  if (updated) {
+    eventBroadcaster.broadcast({
+      type: 'DELIVERY_UPDATED',
+      payload: {
+        taskId: updated._id,
+        deliveryStatus: updated.deliveryStatus,
+        pickupStatus: updated.pickupStatus,
+        assignmentStatus: updated.assignmentStatus,
+        volunteerId: req.auth!.userId,
+      },
+      targetRoles: ['admin', 'ngo', 'citizen', 'volunteer'],
+    })
+  }
+
   res.status(200).json({ data: updated })
 })
 
@@ -388,6 +506,132 @@ volunteerRouter.get('/history', requireAuth, requireRoles('volunteer'), async (r
   }
 
   res.status(200).json({ data: tasks, page: { nextCursor } })
+})
+
+// ---------------------------------------------------------------------------
+// POST /api/volunteer/tasks/:taskId/checkin — opt-in field safety check-in
+// ---------------------------------------------------------------------------
+
+volunteerRouter.post('/tasks/:taskId/checkin', requireAuth, requireRoles('volunteer'), async (req, res) => {
+  const taskId = String(req.params.taskId)
+  if (!validId(taskId)) throw new ApiError(404, 'not_found', 'Task not found.')
+
+  const task = await VolunteerTaskModel.findOne({
+    _id: taskId,
+    volunteer: new Types.ObjectId(req.auth!.userId),
+  })
+  if (!task) throw new ApiError(404, 'not_found', 'Task not found.')
+
+  const b = body(req.body)
+  const note = typeof b.note === 'string' ? b.note.trim().slice(0, 500) : 'Safety check-in OK'
+  let location: { type: 'Point'; coordinates: [number, number] } | undefined
+  if (
+    b.location &&
+    typeof b.location === 'object' &&
+    Array.isArray((b.location as { coordinates?: unknown[] }).coordinates) &&
+    (b.location as { coordinates: number[] }).coordinates.length === 2
+  ) {
+    const coords = (b.location as { coordinates: number[] }).coordinates
+    location = { type: 'Point', coordinates: [coords[0], coords[1]] }
+  }
+
+  const intervalMin = task.safetyCheckIn?.intervalMinutes || 30
+  const now = new Date()
+  const nextDue = new Date(now.getTime() + intervalMin * 60 * 1000)
+
+  const updated = await VolunteerTaskModel.findOneAndUpdate(
+    { _id: taskId, volunteer: new Types.ObjectId(req.auth!.userId) },
+    {
+      $set: {
+        'safetyCheckIn.enabled': true,
+        'safetyCheckIn.lastCheckInAt': now,
+        'safetyCheckIn.nextCheckInDue': nextDue,
+        'safetyCheckIn.overdueAlertSent': false,
+      },
+      $push: {
+        'safetyCheckIn.history': {
+          checkedInAt: now,
+          note,
+          ...(location ? { location } : {}),
+        },
+      },
+    },
+    { returnDocument: 'after' },
+  ).lean()
+
+  if (updated) {
+    eventBroadcaster.broadcast({
+      type: 'DELIVERY_UPDATED',
+      payload: {
+        taskId: updated._id,
+        deliveryStatus: updated.deliveryStatus,
+        pickupStatus: updated.pickupStatus,
+        assignmentStatus: updated.assignmentStatus,
+        volunteerId: req.auth!.userId,
+      },
+      targetRoles: ['admin', 'ngo', 'citizen', 'volunteer'],
+    })
+  }
+
+  res.status(200).json({ data: updated })
+})
+
+// ---------------------------------------------------------------------------
+// POST /api/volunteer/tasks/:taskId/release — emergency or breakdown release
+// ---------------------------------------------------------------------------
+
+volunteerRouter.post('/tasks/:taskId/release', requireAuth, requireRoles('volunteer'), async (req, res) => {
+  const taskId = String(req.params.taskId)
+  if (!validId(taskId)) throw new ApiError(404, 'not_found', 'Task not found.')
+
+  const task = await VolunteerTaskModel.findOne({
+    _id: taskId,
+    volunteer: new Types.ObjectId(req.auth!.userId),
+  })
+  if (!task) throw new ApiError(404, 'not_found', 'Task not found.')
+
+  const b = body(req.body)
+  const reason = typeof b.reason === 'string' ? b.reason.trim().slice(0, 1000) : 'Field breakdown / emergency release'
+
+  const updated = await VolunteerTaskModel.findOneAndUpdate(
+    { _id: taskId, volunteer: new Types.ObjectId(req.auth!.userId) },
+    {
+      $set: {
+        assignmentStatus: 'reassigned',
+        deliveryStatus: 'failed',
+      },
+      $push: {
+        history: {
+          status: 'released_emergency',
+          changedBy: new Types.ObjectId(req.auth!.userId),
+          changedAt: new Date(),
+          reason,
+        },
+      },
+    },
+    { returnDocument: 'after' },
+  ).lean()
+
+  // Decrement volunteer workload
+  await UserModel.findByIdAndUpdate(req.auth!.userId, {
+    $inc: { 'volunteerProfile.currentWorkload': -1 },
+  })
+
+  if (updated) {
+    eventBroadcaster.broadcast({
+      type: 'DELIVERY_UPDATED',
+      payload: {
+        taskId: updated._id,
+        deliveryStatus: updated.deliveryStatus,
+        pickupStatus: updated.pickupStatus,
+        assignmentStatus: updated.assignmentStatus,
+        volunteerId: req.auth!.userId,
+      },
+      targetRoles: ['admin', 'ngo', 'citizen', 'volunteer'],
+    })
+  }
+
+  res.status(200).json({ data: updated })
 })
 
 export default volunteerRouter

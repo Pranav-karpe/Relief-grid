@@ -80,6 +80,6 @@ export function createRateLimiter(options: RateLimiterOptions) {
 
 export const authRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: process.env.NODE_ENV === 'production' ? 20 : 300,
   message: 'Too many authentication attempts. Please try again later.',
 })

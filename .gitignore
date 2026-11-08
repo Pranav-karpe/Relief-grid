@@ -9,3 +9,6 @@ coverage/
 .DS_Store
 Thumbs.db
 .vscode/
+uploads/
+
+docs/reports/RELIEFGRID_DEMO_ACCOUNTS.md

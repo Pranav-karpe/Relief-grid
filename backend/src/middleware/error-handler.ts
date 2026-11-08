@@ -13,6 +13,8 @@ const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => 
     return
   }
 
+  console.error('[Unhandled Internal Error]:', error)
+
   response.status(500).json({
     status: 'error',
     code: 'internal_error',

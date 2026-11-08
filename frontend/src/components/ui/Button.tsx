@@ -43,7 +43,7 @@ function Button({
     <button
       {...props}
       type={props.type ?? 'button'}
-      className={`inline-flex min-h-10 items-center justify-center px-4 py-2 text-sm font-semibold transition-all duration-[180ms] ease-out focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${variantClasses[variant]} ${className}`}
+      className={`inline-flex min-h-11 items-center justify-center px-4.5 py-2.5 text-[15px] font-semibold transition-all duration-[180ms] ease-out focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${variantClasses[variant]} ${className}`}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
     >

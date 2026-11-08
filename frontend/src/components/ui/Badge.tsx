@@ -19,7 +19,7 @@ function Badge({ tone = 'neutral', children, className = '', ...props }: BadgePr
   return (
     <span
       {...props}
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${toneClasses[tone]} ${className}`}
+      className={`inline-flex items-center rounded-full border px-3 py-1 text-[13px] font-semibold tracking-wide ${toneClasses[tone]} ${className}`}
     >
       {children}
     </span>

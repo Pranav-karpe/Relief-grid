@@ -7,6 +7,15 @@ import Button from '../../components/ui/Button'
 import Input from '../../components/ui/Input'
 import Badge from '../../components/ui/Badge'
 import LocationMap from '../../components/ui/LocationMap'
+import { DonorImageUploader } from '../../components/donor/DonorImageUploader'
+import type { ProcessedImage } from '../../lib/image-processing'
+import {
+  GlowingMetricCard,
+  GlowingBarChart,
+  GlowingDonutChart,
+  GlowingProgressMeter,
+} from '../../components/ui/GlowingCharts'
+import { useLiveSync } from '../../lib/live-sync'
 import { useAuthContext } from '../../lib/useAuthContext'
 import {
   createDonation,
@@ -68,6 +77,9 @@ function CreateForm({ token, onCreated }: { token: string; onCreated: () => void
   const [quantity, setQuantity] = useState('')
   const [unit, setUnit] = useState('')
   const [condition, setCondition] = useState<DonationCondition>('good')
+  const [batchNumber, setBatchNumber] = useState('')
+  const [coldChainRequired, setColdChainRequired] = useState(false)
+  const [photos, setPhotos] = useState<ProcessedImage[]>([])
   const [lat, setLat] = useState('')
   const [lng, setLng] = useState('')
   const [expiryDate, setExpiryDate] = useState('')
@@ -127,8 +139,11 @@ function CreateForm({ token, onCreated }: { token: string; onCreated: () => void
         quantity: Number(quantity),
         unit: unit.trim(),
         condition,
+        batchNumber: batchNumber.trim() || undefined,
+        coldChainRequired,
         location: { type: 'Point', coordinates: [Number(lng), Number(lat)] },
         ...(expiryDate ? { expiryDate } : {}),
+        photos: photos.map((p) => ({ data: p.dataUrl, name: p.fileName })),
       }
       await createDonation(token, input)
       setSuccess(true)
@@ -149,7 +164,7 @@ function CreateForm({ token, onCreated }: { token: string; onCreated: () => void
         <h3 className="text-lg font-semibold text-content">Donation Listing Published</h3>
         <p className="text-sm text-muted mt-1 mb-5">Your resource offer is now live in the system and available to be matched with registered NGO requirements.</p>
         <div className="flex justify-center gap-3">
-          <Button onClick={() => { setSuccess(false); setCategory(''); setDescription(''); setQuantity(''); setUnit(''); setLat(''); setLng(''); setExpiryDate(''); setCondition('good') }}>
+          <Button onClick={() => { setSuccess(false); setCategory(''); setDescription(''); setQuantity(''); setUnit(''); setLat(''); setLng(''); setExpiryDate(''); setBatchNumber(''); setColdChainRequired(false); setPhotos([]); setCondition('good') }}>
             Create Another
           </Button>
           <Button variant="secondary" onClick={onCreated}>View My Listings</Button>
@@ -229,6 +244,38 @@ function CreateForm({ token, onCreated }: { token: string; onCreated: () => void
           onChange={(e) => setExpiryDate(e.target.value)}
           error={errors.expiryDate}
           hint="Applicable for food, medicines or perishable supplies."
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-center">
+        <Input
+          label="Batch / Lot Number (optional)"
+          value={batchNumber}
+          onChange={(e) => setBatchNumber(e.target.value)}
+          placeholder="e.g. LOT-2026-X99 or BATCH-44"
+          maxLength={60}
+          hint="Assists NGOs in tracking pharmaceuticals, packaged rations, and recalls."
+        />
+        <div className="flex items-center gap-3 pt-2 md:pt-4">
+          <label className="flex items-center gap-2.5 cursor-pointer text-sm text-content">
+            <input
+              type="checkbox"
+              checked={coldChainRequired}
+              onChange={(e) => setColdChainRequired(e.target.checked)}
+              className="w-4 h-4 rounded border-line bg-surface-raised text-accent focus:ring-accent/30"
+            />
+            <span className="font-medium">Requires Cold-Chain / Refrigeration</span>
+          </label>
+        </div>
+      </div>
+
+      {/* Photo evidence uploader */}
+      <div className="rounded-xl border border-line/80 bg-surface-raised/40 p-4">
+        <DonorImageUploader
+          images={photos}
+          onChange={setPhotos}
+          maxImages={3}
+          disabled={loading}
         />
       </div>
 
@@ -547,6 +594,43 @@ function DonationDetail({ token, donationId, onBack }: { token: string; donation
                   </div>
                 )}
 
+                {donation.batchNumber && (
+                  <div>
+                    <dt className="text-xs text-muted uppercase tracking-wider mb-1">Batch / Lot Number</dt>
+                    <dd className="text-content font-mono font-medium">{donation.batchNumber}</dd>
+                  </div>
+                )}
+
+                {donation.coldChainRequired && (
+                  <div className="flex items-center gap-2 text-xs text-sky-400 bg-sky-950/40 border border-sky-800/50 rounded-lg p-2.5">
+                    <span>❄️ Cold-Chain Storage & Transport Required</span>
+                  </div>
+                )}
+
+                {donation.quarantineStatus && donation.quarantineStatus !== 'none' && (
+                  <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-950/40 border border-amber-800/50 rounded-lg p-2.5">
+                    <span>⚠️ Quarantine Active: {donation.quarantineStatus === 'quarantined_expired' ? 'Expired Supplies' : 'Safety Review'}</span>
+                  </div>
+                )}
+
+                {donation.evidencePhotos && donation.evidencePhotos.length > 0 && (
+                  <div className="pt-2">
+                    <dt className="text-xs text-muted uppercase tracking-wider mb-2">Verified Photo Evidence ({donation.evidencePhotos.length})</dt>
+                    <div className="grid grid-cols-3 gap-2">
+                      {donation.evidencePhotos.map((photo, i) => (
+                        <div key={i} className="relative rounded-lg overflow-hidden border border-line bg-surface-raised group">
+                          <img src={photo.url} alt={`Evidence ${i + 1}`} className="w-full h-24 object-cover" />
+                          {photo.reviewStatus === 'flagged' && (
+                            <span className="absolute bottom-1 right-1 bg-amber-600/90 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
+                              Flagged
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between text-xs text-muted border-t border-line/50 pt-3">
                   <span>Listed on {formatDate(donation.createdAt)}</span>
                   <span>ID: <code className="text-subtle font-mono">{donation._id.slice(-8)}</code></span>
@@ -706,24 +790,39 @@ function Overview({ token, onNavigate }: { token: string; onNavigate: (v: View) 
   const [donations, setDonations] = useState<Donation[] | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
+    setLoading(true)
     getMyDonations(token)
       .then((res) => setDonations(res.data))
       .catch(() => setDonations([]))
       .finally(() => setLoading(false))
   }, [token])
 
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  // Live Cross-Dashboard Synchronization: updates automatically on allocation/dispatch events
+  useLiveSync(() => {
+    loadData()
+  }, [loadData])
+
   const total = donations?.length ?? 0
   const available = donations?.filter((d) => d.availabilityStatus === 'available').length ?? 0
   const inProgress = donations?.filter((d) => ['reserved', 'partially_allocated'].includes(d.availabilityStatus)).length ?? 0
   const completed = donations?.filter((d) => d.availabilityStatus === 'allocated').length ?? 0
 
-  const stats = [
-    { label: 'Total Listings', value: total, tone: 'text-content' },
-    { label: 'Available for Relief', value: available, tone: 'text-success' },
-    { label: 'In Progress / Reserved', value: inProgress, tone: 'text-warning' },
-    { label: 'Fully Allocated', value: completed, tone: 'text-accent' },
-  ]
+  // Category breakdown
+  const categoryMap: Record<string, number> = {}
+  for (const d of donations ?? []) {
+    const cat = d.resourceCategory || 'Other'
+    categoryMap[cat] = (categoryMap[cat] || 0) + 1
+  }
+  const categoryBars = Object.entries(categoryMap).slice(0, 5).map(([label, value]) => ({
+    label,
+    value,
+    color: '#f97316',
+  }))
 
   const mapMarkers = (donations ?? [])
     .filter((d) => d.location && Array.isArray(d.location.coordinates) && d.location.coordinates.length === 2)
@@ -736,19 +835,21 @@ function Overview({ token, onNavigate }: { token: string; onNavigate: (v: View) 
     }))
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       {/* Welcome Banner */}
-      <div className="rounded-2xl border border-line bg-gradient-to-r from-surface to-surface-raised p-6 sm:p-7 shadow-xs">
+      <div className="rounded-2xl border border-line bg-gradient-to-r from-surface to-surface-raised p-6 sm:p-7 shadow-surface">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-xl sm:text-2xl font-bold text-content tracking-tight">Your Donor Resource Hub</h2>
-            <p className="mt-1 text-sm text-muted">Offer resources and monitor allocations to local relief efforts.</p>
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-content tracking-tight">Donor Logistics Console</h2>
+            <p className="mt-1.5 text-base text-muted leading-relaxed">
+              List critical relief supplies, manage active commitments, and verify allocation to active disaster operations.
+            </p>
           </div>
           <Button
             onClick={() => onNavigate('create')}
-            className="shrink-0 gap-2 h-11 px-5 shadow-sm shadow-orange-500/20"
+            className="shrink-0 gap-2 h-12 px-6 text-base font-semibold shadow-sm shadow-orange-500/20"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             Offer Resources
@@ -757,14 +858,86 @@ function Overview({ token, onNavigate }: { token: string; onNavigate: (v: View) 
       </div>
 
       {/* Metrics Row across desktop */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {stats.map((s) => (
-          <div key={s.label} className="rounded-xl border border-line bg-surface p-5 shadow-xs">
-            <p className="text-xs uppercase tracking-wider text-muted font-medium">{s.label}</p>
-            <p className={`mt-2 text-3xl font-bold ${s.tone}`}>{loading ? '—' : s.value}</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+        <GlowingMetricCard
+          title="Total Listed"
+          value={loading ? '—' : total}
+          subtitle="All recorded aid batches"
+          icon="📦"
+          tone="neutral"
+          onClick={() => onNavigate('list')}
+        />
+        <GlowingMetricCard
+          title="Available for Relief"
+          value={loading ? '—' : available}
+          subtitle="Ready for NGO allocation"
+          icon="✨"
+          tone="emerald"
+          onClick={() => onNavigate('list')}
+        />
+        <GlowingMetricCard
+          title="In Transit / Reserved"
+          value={loading ? '—' : inProgress}
+          subtitle="Actively deploying to camps"
+          icon="🚚"
+          tone="amber"
+          onClick={() => onNavigate('list')}
+        />
+        <GlowingMetricCard
+          title="Fully Allocated"
+          value={loading ? '—' : completed}
+          subtitle="Fulfilled & confirmed"
+          icon="✅"
+          tone="orange"
+          onClick={() => onNavigate('list')}
+        />
       </div>
+
+      {/* Glowing Analytics Visuals */}
+      {total > 0 && !loading && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-7 glow-card p-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="type-card-heading text-content">Donation Items by Category</h3>
+              <Badge tone="info">Live Inventory</Badge>
+            </div>
+            <p className="text-sm text-muted mb-4">Volume distribution across registered relief resource types.</p>
+            <GlowingBarChart
+              data={categoryBars.length > 0 ? categoryBars : [{ label: 'General', value: total, color: '#f97316' }]}
+              height={180}
+              unit="batches"
+            />
+          </div>
+
+          <div className="lg:col-span-5 glow-card p-6 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="type-card-heading text-content">Allocation Commitment Rate</h3>
+                <Badge tone="neutral">Status Ratio</Badge>
+              </div>
+              <p className="text-sm text-muted mb-3">Ratio of resources allocated vs available.</p>
+              <GlowingDonutChart
+                centerTitle="Batches"
+                centerValue={total}
+                segments={[
+                  { label: 'Available', value: available, color: '#10b981' },
+                  { label: 'Reserved / Transit', value: inProgress, color: '#f59e0b' },
+                  { label: 'Allocated', value: completed, color: '#f97316' },
+                ]}
+              />
+            </div>
+            <div className="mt-4 pt-3 border-t border-line/50">
+              <GlowingProgressMeter
+                label="Resource Mobilization"
+                value={completed + inProgress}
+                total={total || 1}
+                unit="batches"
+                color="#f97316"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Overview content */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">

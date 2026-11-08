@@ -7,6 +7,7 @@ import {
   type Notification,
 } from '../../api/notifications'
 import { AuthApiError } from '../../api/auth'
+import { useLiveSync } from '../../lib/live-sync'
 
 // ---------------------------------------------------------------------------
 // Bell icon
@@ -48,16 +49,16 @@ function NotificationRow({
 
   return (
     <div
-      className={`flex items-start gap-3 px-4 py-3 border-b border-line last:border-0 transition-colors ${
-        isUnread ? 'bg-accent/5' : ''
+      className={`flex items-start gap-3.5 px-4.5 py-3.5 border-b border-line last:border-0 transition-colors ${
+        isUnread ? 'bg-orange/5' : ''
       }`}
     >
       <div className="flex-1 min-w-0">
-        <p className={`text-sm font-medium truncate ${isUnread ? 'text-content' : 'text-muted'}`}>
+        <p className={`text-[15px] font-semibold truncate ${isUnread ? 'text-content' : 'text-muted'}`}>
           {notification.title}
         </p>
-        <p className="text-xs text-muted mt-0.5 line-clamp-2">{notification.message}</p>
-        <p className="text-xs text-muted mt-1">
+        <p className="text-[13.5px] text-muted mt-1 leading-normal line-clamp-2">{notification.message}</p>
+        <p className="text-xs text-muted/70 mt-1 font-mono">
           {new Date(notification.createdAt).toLocaleDateString(undefined, {
             month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
           })}
@@ -67,8 +68,8 @@ function NotificationRow({
         <button
           type="button"
           onClick={() => onRead(notification._id)}
-          className="shrink-0 text-xs text-accent hover:underline focus-visible:outline-none"
           aria-label={`Mark "${notification.title}" as read`}
+          className="shrink-0 text-xs font-semibold text-orange hover:underline focus-visible:outline-none"
         >
           Mark read
         </button>
@@ -92,7 +93,7 @@ export default function NotificationPanel({ token }: Props) {
   const [markingAll, setMarkingAll] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Poll unread count every 60 s
+  // Poll unread count every 60 s & update instantly on live sync events
   const fetchCount = useCallback(async () => {
     try {
       const count = await getUnreadCount(token)
@@ -101,6 +102,10 @@ export default function NotificationPanel({ token }: Props) {
       // Non-fatal — count stays stale
     }
   }, [token])
+
+  useLiveSync(() => {
+    void fetchCount()
+  }, [fetchCount])
 
   useEffect(() => {
     void fetchCount()
